@@ -4,7 +4,7 @@ from aiogram.types import Message
 from aiogram.filters import CommandStart
 import asyncio
 import logging
-from bot.modules import context, gemini, management, media_map, random_life, smart_behavior, chat_scanner, reactions, rate_limiter
+from bot.modules import context, gemini, management, media_map, random_life, smart_behavior, chat_scanner, reactions, rate_limiter, enhanced_behavior
 from bot.bot_config import PERSONA
 import os
 from dotenv import load_dotenv
@@ -157,37 +157,53 @@ async def universal_handler(message: Message):
             # Можливо ставимо реакцію (перед іншими відповідями)
             reaction_posted = await reactions.maybe_react_to_message(message)
             
-            # Перевіряємо чи потрібна спонтанна активність (раз на N хвилин)
-            if smart_behavior.should_be_spontaneous(chat_id):
-                recent_context = [m.get('text', '') for m in context.get_context(chat_id)[-5:]]
-                prompt = smart_behavior.get_spontaneous_prompt(recent_context)
+            # НОВИЙ РОЗУМНИЙ АНАЛІЗ КОНТЕКСТУ
+            if message.text:
+                # Аналізуємо контекст повідомлення
+                recent_messages = [m.get('text', '') for m in context.get_context(chat_id)[-10:]]
+                analysis = enhanced_behavior.analyze_conversation_context(message.text, recent_messages)
+                
+                # Оновлюємо історію аналізу
+                enhanced_behavior.update_chat_analysis(chat_id, analysis)
+                
+                # Логування для розуміння роботи системи
+                logging.info(f"Аналіз повідомлення - Тип: {analysis['type']}, Настрій: {analysis['mood']}, Залученість: {analysis['engagement']}")
+                
+                # Якщо аналіз рекомендує відповісти
+                if analysis['should_respond']:
+                    # Створюємо контекстно-свідомий промт
+                    context_prompt = enhanced_behavior.create_context_aware_prompt(message.text, analysis)
+                    
+                    # Створюємо фейкове повідомлення з покращеним промтом
+                    class EnhancedFakeMessage:
+                        def __init__(self, original_message, enhanced_prompt):
+                            self.text = enhanced_prompt
+                            self.from_user = original_message.from_user
+                            self.chat = original_message.chat
+                            self.original_text = original_message.text
+                    
+                    enhanced_msg = EnhancedFakeMessage(message, context_prompt)
+                    reply = await gemini.process_message(enhanced_msg)
+                    await safe_reply(message, reply)
+                    smart_behavior.mark_bot_activity(chat_id)
+                    return
+            
+            # Спонтанна активність з урахуванням трендів
+            if enhanced_behavior.should_intervene_spontaneously(chat_id):
+                spontaneous_prompt = enhanced_behavior.get_spontaneous_prompt_based_on_trends(chat_id)
                 
                 class FakeMessage:
                     def __init__(self, text: str):
                         self.text = text
                         self.from_user = type('User', (), {'full_name': PERSONA['name']})
-                        self.chat = type('Chat', (), {'id': 0})
+                        self.chat = type('Chat', (), {'id': chat_id})
                 
-                fake_msg = FakeMessage(prompt)
+                fake_msg = FakeMessage(spontaneous_prompt)
                 reply = await gemini.process_message(fake_msg)
                 await safe_reply(message, f"💭 {reply}")
+                enhanced_behavior.mark_intervention(chat_id)
                 smart_behavior.mark_bot_activity(chat_id, is_spontaneous=True)
                 return
-            
-            # Рандомна відповідь на тригери (згадки імені)
-            if message.text and random_life.should_reply_randomly(message.text):
-                if random.random() < PERSONA["random_reply_chance"]:
-                    recent_context = [m.get('text', '') for m in context.get_context(chat_id)[-5:]]
-                    reply = await random_life.get_random_reply(recent_context)
-                    await safe_reply(message, reply)
-                    smart_behavior.mark_bot_activity(chat_id)
-                    return
-            
-            # Розумна відповідь на звичайні повідомлення (рідко)
-            if smart_behavior.should_reply_smart(chat_id, message.text or ""):
-                reply = await gemini.process_message(message)
-                await safe_reply(message, reply)
-                smart_behavior.mark_bot_activity(chat_id)
     
     except Exception as e:
         chat_id = getattr(message.chat, 'id', 0) if hasattr(message, 'chat') else 0
@@ -204,7 +220,7 @@ async def universal_handler(message: Message):
             await safe_reply(message, "Ой, щось пішло не так... 🤖")
 
 async def spontaneous_activity_loop():
-    """Фонова задача для спонтанної активності"""
+    """Покращена фонова задача для спонтанної активності з аналізом трендів"""
     while True:
         try:
             await asyncio.sleep(300)  # Перевіряємо кожні 5 хвилин
@@ -214,10 +230,10 @@ async def spontaneous_activity_loop():
             active_chats = get_active_chats()
             
             for chat_id in active_chats:
-                # Перевіряємо чи потрібна спонтанна активність
-                if smart_behavior.should_be_spontaneous(chat_id):
-                    recent_context = [m.get('text', '') for m in context.get_context(chat_id)[-5:]]
-                    prompt = smart_behavior.get_spontaneous_prompt(recent_context)
+                # Використовуємо покращену логіку втручання
+                if enhanced_behavior.should_intervene_spontaneously(chat_id):
+                    # Генеруємо промт на основі трендів чату
+                    spontaneous_prompt = enhanced_behavior.get_spontaneous_prompt_based_on_trends(chat_id)
                     
                     class FakeMessage:
                         def __init__(self, text: str):
@@ -225,12 +241,20 @@ async def spontaneous_activity_loop():
                             self.from_user = type('User', (), {'full_name': PERSONA['name']})
                             self.chat = type('Chat', (), {'id': chat_id})
                     
-                    fake_msg = FakeMessage(prompt)
+                    fake_msg = FakeMessage(spontaneous_prompt)
                     reply = await gemini.process_message(fake_msg)
                     
                     # Відправляємо повідомлення в чат
                     await safe_send_message(chat_id, f"💭 {reply}")
+                    enhanced_behavior.mark_intervention(chat_id)
                     smart_behavior.mark_bot_activity(chat_id, is_spontaneous=True)
+                    
+                    # Логуємо активність
+                    trends = enhanced_behavior.get_chat_trends(chat_id)
+                    logging.info(f"Спонтанна активність в чаті {chat_id}: активність={trends['activity']}, настрій={trends['mood_trend']}")
+                    
+                    # Затримка між спонтанними повідомленнями в різних чатах
+                    await asyncio.sleep(30)
                     
                     # Затримка між спонтанними повідомленнями в різних чатах
                     await asyncio.sleep(30)

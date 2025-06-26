@@ -76,6 +76,9 @@ globs: *
 *   The bot should use `BOT_SPAM_THRESHOLD`, `BOT_SPAM_TIMEOUT`, and `BOT_SPAM_REPLIES` variables in `.env` file to control aggressive anti-spam throttling.
 *   The bot should ignore old messages received while offline to prevent spamming upon restart. A message is considered old if its timestamp is older than `BOT_START_TIME`. The `BOT_IGNORE_OLD_MESSAGES` variable in `.env` file controls this.
 *   Set `BOT_IGNORE_OLD_MESSAGES` to `true` to enable ignoring old messages. The `BOT_MAX_MESSAGE_AGE_MINUTES` variable in `.env` file defines the maximum age of messages to be processed (in minutes).
+*   Implement a module for analyzing and predicting chat situations to improve context understanding.
+*   Add an admin command `/analytics` to view chat analytics.
+*   Update the `/help` command to include the new `/analytics` command.
 
 ## DEBUGGING
 

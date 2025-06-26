@@ -78,6 +78,29 @@ async def handle(message: Message):
             await message.reply(f"❌ Помилка при повторному скануванні: {e}")
             return
     
+    elif message.text == "/analytics":
+        try:
+            from bot.modules import enhanced_behavior
+            chat_id = message.chat.id
+            
+            # Отримуємо тренди чату
+            trends = enhanced_behavior.get_chat_trends(chat_id, hours=24)
+            
+            analytics_text = f"""📈 Аналітика чату за 24 години:
+
+🎯 Активність: {trends['activity']}
+😊 Тенденція настрою: {trends['mood_trend']}
+🏆 Популярні теми: {', '.join(trends['topics'][:3])}
+📊 Середня залученість: {trends.get('engagement_avg', 0):.1f}/10
+
+💡 Рекомендації бота базуються на цих даних для оптимальної взаємодії."""
+            
+            await message.reply(analytics_text)
+            return
+        except Exception as e:
+            await message.reply(f"❌ Помилка отримання аналітики: {e}")
+            return
+
     elif message.text == "/reactions":
         try:
             from bot.modules.reactions import get_all_available_reactions
@@ -100,7 +123,7 @@ async def handle(message: Message):
     elif message.text == "/help":
         prompt = (
             "Ти — Гряг, дружелюбний бот з легким гумором. Покажи список доступних адмін-команд у веселому, але зрозумілому стилі. "
-            "Команди: /stats, /help, /clear_context, /rescan, /reactions, /import_history"
+            "Команди: /stats, /help, /clear_context, /rescan, /reactions, /analytics, /import_history"
         )
     else:
         prompt = (
