@@ -10,7 +10,7 @@ def create_release():
     """Створює архів з релізом бота"""
     
     # Версія з CHANGELOG
-    version = "v2.3"
+    version = "v2.4"
     
     # Поточна директорія
     current_dir = Path(__file__).parent

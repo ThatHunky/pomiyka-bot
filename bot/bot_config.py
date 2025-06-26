@@ -36,7 +36,11 @@ PERSONA = {
     "max_history_scan": int(os.getenv("BOT_MAX_HISTORY_SCAN", 500)),
     # Ігнорування старих повідомлень
     "ignore_old_messages": os.getenv("BOT_IGNORE_OLD_MESSAGES", "true").lower() == "true",
-    "max_message_age_minutes": int(os.getenv("BOT_MAX_MESSAGE_AGE_MINUTES", 10))  # хвилин
+    "max_message_age_minutes": int(os.getenv("BOT_MAX_MESSAGE_AGE_MINUTES", 10)),  # хвилин
+    # Rate limiting для запобігання flood control
+    "rate_limit_per_chat": int(os.getenv("BOT_RATE_LIMIT_PER_CHAT", 3)),  # повідомлень на хвилину на чат
+    "global_rate_limit": int(os.getenv("BOT_GLOBAL_RATE_LIMIT", 20)),  # повідомлень на хвилину глобально
+    "error_reply_chance": float(os.getenv("BOT_ERROR_REPLY_CHANCE", 0.1))  # шанс відповіді при помилці
 }
 
 # Gemini налаштування

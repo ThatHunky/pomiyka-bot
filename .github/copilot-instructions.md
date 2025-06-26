@@ -74,11 +74,13 @@ globs: *
 *   Implement aggressive anti-spam throttling: track the number of messages a user sends per minute; if spamming (5+ messages per minute), set a timeout of 5 minutes; occasionally reply with phrases like "тіха блять, хохли", "не спамте", "заткніться на хвилинку" (30% chance), otherwise ignore.
 *   The bot should use `BOT_SPONTANEOUS_CHANCE` and `BOT_SPONTANEOUS_MIN_PAUSE` variables in `.env` file to control spontaneous messages.
 *   The bot should use `BOT_SPAM_THRESHOLD`, `BOT_SPAM_TIMEOUT`, and `BOT_SPAM_REPLIES` variables in `.env` file to control aggressive anti-spam throttling.
-*   The bot should ignore old messages received while offline to prevent spamming upon restart. A message is considered old if its timestamp is older than `BOT_START_TIME`.
+*   The bot should ignore old messages received while offline to prevent spamming upon restart. A message is considered old if its timestamp is older than `BOT_START_TIME`. The `BOT_IGNORE_OLD_MESSAGES` variable in `.env` file controls this.
+*   Set `BOT_IGNORE_OLD_MESSAGES` to `true` to enable ignoring old messages. The `BOT_MAX_MESSAGE_AGE_MINUTES` variable in `.env` file defines the maximum age of messages to be processed (in minutes).
 
 ## DEBUGGING
 
 *   Ensure random responses are handled asynchronously using `await`.
+*   Improve error handling by implementing rate limiting and safe message sending to avoid flood control errors from Telegram.
 
 ## REFERENCES
 

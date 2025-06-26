@@ -4,12 +4,13 @@ from aiogram.types import Message
 from aiogram.filters import CommandStart
 import asyncio
 import logging
-from bot.modules import context, gemini, management, media_map, random_life, smart_behavior, chat_scanner, reactions
+from bot.modules import context, gemini, management, media_map, random_life, smart_behavior, chat_scanner, reactions, rate_limiter
 from bot.bot_config import PERSONA
 import os
 from dotenv import load_dotenv
 import random
 from datetime import datetime, timezone, timedelta
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 load_dotenv()
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -41,6 +42,63 @@ def is_message_too_old(message: Message) -> bool:
     
     return False
 
+async def safe_reply(message: Message, text: str, chat_id = None) -> bool:
+    """Безпечна відправка відповіді з rate limiting та error handling"""
+    if chat_id is None:
+        chat_id = message.chat.id
+    
+    # Перевірка rate limiting
+    if not rate_limiter.rate_limiter.can_send_message(
+        chat_id, 
+        PERSONA["rate_limit_per_chat"], 
+        PERSONA["global_rate_limit"]
+    ):
+        logging.warning(f"Rate limit: пропускаємо відправку в чат {chat_id}")
+        return False
+    
+    try:
+        await message.reply(text)
+        return True
+    except TelegramRetryAfter as e:
+        logging.warning(f"Telegram rate limit: затримка {e.retry_after} секунд")
+        rate_limiter.rate_limiter.record_error(chat_id)
+        return False
+    except TelegramBadRequest as e:
+        logging.warning(f"Telegram помилка: {e}")
+        rate_limiter.rate_limiter.record_error(chat_id)
+        return False
+    except Exception as e:
+        logging.error(f"Несподівана помилка при відправці: {e}")
+        rate_limiter.rate_limiter.record_error(chat_id)
+        return False
+
+async def safe_send_message(chat_id: int, text: str) -> bool:
+    """Безпечна відправка повідомлення з rate limiting"""
+    # Перевірка rate limiting
+    if not rate_limiter.rate_limiter.can_send_message(
+        chat_id, 
+        PERSONA["rate_limit_per_chat"], 
+        PERSONA["global_rate_limit"]
+    ):
+        logging.warning(f"Rate limit: пропускаємо відправку в чат {chat_id}")
+        return False
+    
+    try:
+        await bot.send_message(chat_id, text)
+        return True
+    except TelegramRetryAfter as e:
+        logging.warning(f"Telegram rate limit: затримка {e.retry_after} секунд")
+        rate_limiter.rate_limiter.record_error(chat_id)
+        return False
+    except TelegramBadRequest as e:
+        logging.warning(f"Telegram помилка: {e}")
+        rate_limiter.rate_limiter.record_error(chat_id)
+        return False
+    except Exception as e:
+        logging.error(f"Несподівана помилка при відправці: {e}")
+        rate_limiter.rate_limiter.record_error(chat_id)
+        return False
+
 # Обробка старту
 @dp.message(CommandStart())
 async def start_handler(message: Message):
@@ -59,15 +117,15 @@ async def universal_handler(message: Message):
             if message.text and message.text.startswith("/import_history"):
                 parts = message.text.split()
                 if len(parts) < 3:
-                    await message.reply("Вкажіть шлях до JSON та chat_id: /import_history <шлях_до_json> <chat_id>")
+                    await safe_reply(message, "Вкажіть шлях до JSON та chat_id: /import_history <шлях_до_json> <chat_id>")
                     return
                 json_path = parts[1]
                 chat_id = int(parts[2])
                 try:
                     result = chat_scanner.import_telegram_history(json_path, chat_id)
-                    await message.reply(f"✅ Історію імпортовано! {result} повідомлень додано.")
+                    await safe_reply(message, f"✅ Історію імпортовано! {result} повідомлень додано.")
                 except Exception as e:
-                    await message.reply(f"❌ Помилка імпорту: {e}")
+                    await safe_reply(message, f"❌ Помилка імпорту: {e}")
                 return
             elif message.text and message.text.startswith("/"):
                 await management.handle(message)
@@ -86,7 +144,7 @@ async def universal_handler(message: Message):
                 # Іноді відповідаємо на спам
                 if random.random() < 0.3:  # 30% шанс відповісти
                     spam_reply = smart_behavior.get_spam_reply()
-                    await message.reply(spam_reply)
+                    await safe_reply(message, spam_reply)
                 return
             
             # Автоматичне сканування історії при першому запуску
@@ -112,7 +170,7 @@ async def universal_handler(message: Message):
                 
                 fake_msg = FakeMessage(prompt)
                 reply = await gemini.process_message(fake_msg)
-                await message.reply(f"💭 {reply}")
+                await safe_reply(message, f"💭 {reply}")
                 smart_behavior.mark_bot_activity(chat_id, is_spontaneous=True)
                 return
             
@@ -121,19 +179,29 @@ async def universal_handler(message: Message):
                 if random.random() < PERSONA["random_reply_chance"]:
                     recent_context = [m.get('text', '') for m in context.get_context(chat_id)[-5:]]
                     reply = await random_life.get_random_reply(recent_context)
-                    await message.reply(reply)
+                    await safe_reply(message, reply)
                     smart_behavior.mark_bot_activity(chat_id)
                     return
             
             # Розумна відповідь на звичайні повідомлення (рідко)
             if smart_behavior.should_reply_smart(chat_id, message.text or ""):
                 reply = await gemini.process_message(message)
-                await message.reply(reply)
+                await safe_reply(message, reply)
                 smart_behavior.mark_bot_activity(chat_id)
     
     except Exception as e:
+        chat_id = getattr(message.chat, 'id', 0) if hasattr(message, 'chat') else 0
         logging.error(f"Помилка в universal_handler: {e}")
-        await message.reply("Ой, щось пішло не так... 🤖")
+        
+        # Записуємо помилку для rate limiting
+        if chat_id:
+            rate_limiter.rate_limiter.record_error(chat_id)
+        
+        # Відповідаємо на помилку тільки якщо не багато помилок і є шанс
+        if (chat_id and 
+            not rate_limiter.rate_limiter.should_suppress_errors(chat_id) and 
+            random.random() < PERSONA["error_reply_chance"]):
+            await safe_reply(message, "Ой, щось пішло не так... 🤖")
 
 async def spontaneous_activity_loop():
     """Фонова задача для спонтанної активності"""
@@ -161,7 +229,7 @@ async def spontaneous_activity_loop():
                     reply = await gemini.process_message(fake_msg)
                     
                     # Відправляємо повідомлення в чат
-                    await bot.send_message(chat_id, f"💭 {reply}")
+                    await safe_send_message(chat_id, f"💭 {reply}")
                     smart_behavior.mark_bot_activity(chat_id, is_spontaneous=True)
                     
                     # Затримка між спонтанними повідомленнями в різних чатах
