@@ -93,3 +93,13 @@ def get_global_stats():
     active_chats = c.fetchone()[0]
     conn.close()
     return {"total_messages": total_messages, "active_chats": active_chats}
+
+def get_active_chats():
+    """Повертає список активних чатів (ID)"""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT chat_id FROM messages")
+    chat_ids = [row[0] for row in c.fetchall()]
+    conn.close()
+    return chat_ids

@@ -5,9 +5,42 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from bot.bot_config import PERSONA
 
-# Трекінг активності бота
+# Трекінг активності бота та користувачів
 bot_activity = defaultdict(list)  # chat_id -> [timestamps]
+user_activity = defaultdict(lambda: defaultdict(list))  # chat_id -> user_id -> [timestamps]
 last_spontaneous = defaultdict(float)  # chat_id -> timestamp
+spam_timeouts = defaultdict(float)  # chat_id -> end_timeout_timestamp
+
+def track_user_activity(chat_id: int, user_id: int):
+    """Відстежує активність користувача для анти-спам системи"""
+    now = time.time()
+    user_activity[chat_id][user_id].append(now)
+    
+    # Очищуємо старі записи (старше хвилини)
+    minute_ago = now - 60
+    user_activity[chat_id][user_id] = [ts for ts in user_activity[chat_id][user_id] if ts > minute_ago]
+
+def is_spam_detected(chat_id: int, user_id: int = None) -> bool:
+    """Перевіряє чи виявлено спам у чаті"""
+    now = time.time()
+    
+    # Перевіряємо чи чат все ще в таймауті
+    if now < spam_timeouts[chat_id]:
+        return True
+    
+    if user_id:
+        # Перевіряємо активність конкретного користувача
+        recent_messages = len(user_activity[chat_id][user_id])
+        if recent_messages >= PERSONA["spam_threshold"]:
+            # Встановлюємо таймаут для чату
+            spam_timeouts[chat_id] = now + PERSONA["spam_timeout"]
+            return True
+    
+    return False
+
+def get_spam_reply() -> str:
+    """Повертає випадкову відповідь на спам"""
+    return random.choice(PERSONA["spam_replies"])
 
 def should_reply_smart(chat_id: int, message_text: str = "") -> bool:
     """Розумно визначає, чи варто відповісти"""
@@ -37,7 +70,7 @@ def should_be_spontaneous(chat_id: int) -> bool:
     now = time.time()
     
     # Перевіряємо мінімальну паузу з останньої спонтанної активності
-    min_silence = PERSONA["min_silence_minutes"] * 60
+    min_silence = PERSONA["spontaneous_min_pause"] * 60
     if now - last_spontaneous[chat_id] < min_silence:
         return False
     
@@ -47,8 +80,17 @@ def should_be_spontaneous(chat_id: int) -> bool:
     if len(bot_activity[chat_id]) >= PERSONA["max_replies_per_hour"]:
         return False
     
-    # Спонтанна активність з низькою ймовірністю
-    return random.random() < PERSONA["spontaneous_chance"]
+    # Спонтанна активність з низькою ймовірністю, але вища після довгої тиші
+    base_chance = PERSONA["spontaneous_chance"]
+    
+    # Збільшуємо шанс, якщо довго не було спонтанних повідомлень
+    time_since_last = now - last_spontaneous[chat_id]
+    if time_since_last > 7200:  # 2 години
+        base_chance *= 3
+    elif time_since_last > 3600:  # 1 година
+        base_chance *= 2
+    
+    return random.random() < base_chance
 
 def mark_bot_activity(chat_id: int, is_spontaneous: bool = False):
     """Позначає активність бота"""
@@ -59,19 +101,29 @@ def mark_bot_activity(chat_id: int, is_spontaneous: bool = False):
 
 def get_spontaneous_prompt(recent_messages: list) -> str:
     """Генерує prompt для спонтанної активності"""
+    mood = analyze_chat_mood(recent_messages) if recent_messages else "тиша"
+    
     if not recent_messages:
-        return (
-            "Ти — Гряг, абсурдний дух чату. В чаті довго тиша. "
-            "Напиши щось коротке, дивне, філософське або просто абсурдне, щоб нагадати про себе. "
-            "Не питай нічого, просто будь загадковим."
-        )
+        prompts = [
+            "Ти — Гряг, абсурдний дух чату. В чаті довго тиша. Напиши щось коротке, загадкове або філософське.",
+            "Ти — Гряг. Чат замовк. Нагадай про себе якимось абсурдним коментарем або думкою.",
+            "Ти — Гряг. Тиша в чаті. Скажи щось дивне, але дотепне, щоб розбавити атмосферу.",
+            "Ти — Гряг. Довга тиша. Поділися якоюсь абсурдною мудрістю або спостереженням."
+        ]
+        return random.choice(prompts)
     
     context = " ".join(recent_messages[-3:])
-    return (
-        f"Ти — Гряг, абсурдний дух чату. Ось останні повідомлення: {context}. "
-        "Напиши щось коротке, дотепне, що відноситься до контексту, але в абсурдному стилі. "
-        "Не питай нічого, просто додай свій абсурдний коментар."
-    )
+    
+    mood_prompts = {
+        "веселий": f"Ти — Гряг. В чаті весело: {context}. Додай свій абсурдний коментар до веселощів.",
+        "сумний": f"Ти — Гряг. В чаті сумно: {context}. Скажи щось абсурдно-підбадьорливе.",
+        "злий": f"Ти — Гряг. В чаті напруга: {context}. Розрядь ситуацію абсурдним коментарем.",
+        "роздумливий": f"Ти — Гряг. В чаті роздуми: {context}. Додай свою абсурдну філософію.",
+        "тихий": f"Ти — Гряг. Чат притих: {context}. Скажи щось дивне, щоб оживити атмосферу.",
+    }
+    
+    default_prompt = f"Ти — Гряг. Останні повідомлення: {context}. Скажи щось абсурдне, що стосується контексту."
+    return mood_prompts.get(mood, default_prompt)
 
 def analyze_chat_mood(messages: list) -> str:
     """Аналізує настрій чату для кращого розуміння контексту"""

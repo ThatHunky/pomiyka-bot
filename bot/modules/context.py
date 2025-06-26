@@ -66,3 +66,8 @@ def get_context(chat_id):
         context_list.insert(0, {"user": "Гряг", "text": f"Обстановка в чаті: {mood_summary}"})
     
     return context_list
+
+def get_active_chats():
+    """Повертає список активних чатів"""
+    from bot.modules.context_sqlite import get_active_chats as get_active_chats_sqlite
+    return get_active_chats_sqlite()

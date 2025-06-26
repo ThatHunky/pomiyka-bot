@@ -34,6 +34,14 @@ def is_chat_scanned(chat_id: int) -> bool:
     states = load_chat_states()
     return states.get(str(chat_id), {}).get("scanned", False)
 
+def reset_chat_scan_state(chat_id: int):
+    """Скидає стан сканування чату для повторного сканування"""
+    states = load_chat_states()
+    if str(chat_id) in states:
+        del states[str(chat_id)]
+        save_chat_states(states)
+        logging.info(f"Скинуто стан сканування для чату {chat_id}")
+
 async def auto_scan_chat_history(bot: Bot, chat_id: int):
     """Автоматично сканує історію чату та додає в базу"""
     if not PERSONA["auto_scan_history"]:

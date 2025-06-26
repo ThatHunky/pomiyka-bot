@@ -42,6 +42,55 @@ async def handle(message: Message):
             await message.reply(f"❌ Помилка отримання статистики: {e}")
             return
     
+    elif message.text == "/rescan":
+        try:
+            from bot.modules.chat_scanner import reset_chat_scan_state, auto_scan_chat_history
+            from aiogram import Bot
+            from bot.bot_config import PERSONA
+            
+            chat_id = message.chat.id
+            
+            # Перевіряємо, чи це груповий чат
+            if message.chat.type not in ["group", "supergroup"]:
+                await message.reply("❌ Команда /rescan доступна лише в групових чатах.")
+                return
+            
+            # Скидаємо стан сканування
+            reset_chat_scan_state(chat_id)
+            
+            # Отримуємо бота з глобального контексту main.py
+            import sys
+            if hasattr(sys.modules.get('bot.main'), 'bot'):
+                bot = sys.modules['bot.main'].bot
+                
+                await message.reply("🔄 Починаю повторне сканування історії чату...")
+                
+                # Запускаємо сканування асинхронно
+                import asyncio
+                asyncio.create_task(auto_scan_chat_history(bot, chat_id))
+                
+                await message.reply("✅ Сканування запущено! Історія чату буде оновлена.")
+            else:
+                await message.reply("❌ Не вдалося отримати доступ до бота для сканування.")
+            
+            return
+        except Exception as e:
+            await message.reply(f"❌ Помилка при повторному скануванні: {e}")
+            return
+    
+    elif message.text == "/reactions":
+        try:
+            from bot.modules.reactions import get_all_available_reactions
+            reactions_list = get_all_available_reactions()
+            reactions_text = "🎭 Доступні реакції бота:\n" + " ".join(reactions_list[:20])  # Показуємо перші 20
+            if len(reactions_list) > 20:
+                reactions_text += f"\n... та ще {len(reactions_list) - 20} інших!"
+            await message.reply(reactions_text)
+            return
+        except Exception as e:
+            await message.reply(f"❌ Помилка отримання реакцій: {e}")
+            return
+    
     # Всі інші команди через абсурдного Гряга
     if message.text == "/stats":
         prompt = (
@@ -50,12 +99,12 @@ async def handle(message: Message):
         )
     elif message.text == "/help":
         prompt = (
-            "Ти — Гряг, абсурдний бот-дух. Покажи список доступних адмін-команд у абсурдному стилі. "
-            "Команди: /stats, /help, /clear_context, /import_history"
+            "Ти — Гряг, дружелюбний бот з легким гумором. Покажи список доступних адмін-команд у веселому, але зрозумілому стилі. "
+            "Команди: /stats, /help, /clear_context, /rescan, /reactions, /import_history"
         )
     else:
         prompt = (
-            "Ти — Гряг, абсурдний бот-дух. Відповідай на адмінські команди у стилі абсурду, мемів, парадоксів. "
+            "Ти — Гряг, дружелюбний бот з легким гумором. Відповідай на адмінські команди у веселому, дружньому стилі. "
             f"Ось команда: {message.text}. Якщо не знаєш — запропонуй /help"
         )
     
