@@ -63,6 +63,6 @@ def get_context(chat_id):
         
         from collections import Counter
         mood_summary = Counter(moods).most_common(1)[0][0] if moods else "звичайний"
-        context_list.insert(0, {"user": "Глек", "text": f"Обстановка в чаті: {mood_summary}"})
+        context_list.insert(0, {"user": "Гряг", "text": f"Обстановка в чаті: {mood_summary}"})
     
     return context_list

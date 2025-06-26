@@ -4,7 +4,7 @@ from aiogram.types import Message
 from aiogram.filters import CommandStart
 import asyncio
 import logging
-from bot.modules import context, gemini, management, media_map, context_sqlite, random_life
+from bot.modules import context, gemini, management, media_map, random_life, smart_behavior, chat_scanner
 from bot.bot_config import PERSONA
 import os
 from dotenv import load_dotenv
@@ -37,10 +37,10 @@ async def universal_handler(message: Message):
                 json_path = parts[1]
                 chat_id = int(parts[2])
                 try:
-                    context_sqlite.import_telegram_history(json_path, chat_id)
-                    await message.reply("Історію імпортовано!")
+                    result = chat_scanner.import_telegram_history(json_path, chat_id)
+                    await message.reply(f"✅ Історію імпортовано! {result} повідомлень додано.")
                 except Exception as e:
-                    await message.reply(f"Помилка імпорту: {e}")
+                    await message.reply(f"❌ Помилка імпорту: {e}")
                 return
             elif message.text and message.text.startswith("/"):
                 await management.handle(message)
@@ -48,20 +48,46 @@ async def universal_handler(message: Message):
         
         # Групові чати
         if message.chat.type in ["group", "supergroup"]:
-            # Зберігаємо контекст
+            chat_id = message.chat.id
+            
+            # Автоматичне сканування історії при першому запуску
+            if not chat_scanner.is_chat_scanned(chat_id):
+                await chat_scanner.auto_scan_chat_history(bot, chat_id)
+            
+            # Завжди зберігаємо контекст
             context.save_message(message)
             
-            # Рандомна відповідь, якщо згадано бота
+            # Перевіряємо чи потрібна спонтанна активність (раз на N хвилин)
+            if smart_behavior.should_be_spontaneous(chat_id):
+                recent_context = [m['text'] for m in context.get_context(chat_id)[-5:]]
+                prompt = smart_behavior.get_spontaneous_prompt(recent_context)
+                
+                class FakeMessage:
+                    def __init__(self, text: str):
+                        self.text = text
+                        self.from_user = type('User', (), {'full_name': PERSONA['name']})
+                        self.chat = type('Chat', (), {'id': 0})
+                
+                fake_msg = FakeMessage(prompt)
+                reply = await gemini.process_message(fake_msg)
+                await message.reply(f"💭 {reply}")
+                smart_behavior.mark_bot_activity(chat_id, is_spontaneous=True)
+                return
+            
+            # Рандомна відповідь на тригери (згадки імені)
             if message.text and random_life.should_reply_randomly(message.text):
-                if random.random() < 0.5:  # 50% ймовірність відповісти
-                    recent_context = [m['text'] for m in context.get_context(message.chat.id)[-5:]]
+                if random.random() < PERSONA["random_reply_chance"]:
+                    recent_context = [m['text'] for m in context.get_context(chat_id)[-5:]]
                     reply = await random_life.get_random_reply(recent_context)
                     await message.reply(reply)
+                    smart_behavior.mark_bot_activity(chat_id)
                     return
             
-            # Звичайна відповідь через Gemini
-            reply = await gemini.process_message(message)
-            await message.reply(reply)
+            # Розумна відповідь на звичайні повідомлення (рідко)
+            if smart_behavior.should_reply_smart(chat_id, message.text or ""):
+                reply = await gemini.process_message(message)
+                await message.reply(reply)
+                smart_behavior.mark_bot_activity(chat_id)
     
     except Exception as e:
         logging.error(f"Помилка в universal_handler: {e}")

@@ -3,12 +3,13 @@ import sqlite3
 from aiogram.types import Message
 from datetime import datetime
 import os
-
-DB_PATH = "bot/context.db"
+from bot.bot_config import DB_PATH
 
 # Ініціалізація бази
 
 def init_db():
+    # Створюємо директорію якщо не існує
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -68,3 +69,27 @@ def save_message_obj(chat_id, user, text, timestamp):
         (chat_id, user, text, timestamp))
     conn.commit()
     conn.close()
+
+def get_chat_stats(chat_id):
+    """Статистика чату"""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (chat_id,))
+    total = c.fetchone()[0]
+    c.execute("SELECT COUNT(DISTINCT user_name) FROM messages WHERE chat_id=?", (chat_id,))
+    users = c.fetchone()[0]
+    conn.close()
+    return {"total_messages": total, "unique_users": users}
+
+def get_global_stats():
+    """Загальна статистика по всіх чатах"""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM messages")
+    total_messages = c.fetchone()[0]
+    c.execute("SELECT COUNT(DISTINCT chat_id) FROM messages")
+    active_chats = c.fetchone()[0]
+    conn.close()
+    return {"total_messages": total_messages, "active_chats": active_chats}

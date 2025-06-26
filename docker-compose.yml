@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  gryag-bot:
+    build: .
+    container_name: gryag-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data          # Персистентні дані (база, медіа)
+      - ./.env:/app/.env:ro       # Конфіг (read-only)
+    environment:
+      - BOT_DATA_DIR=/app/data
+    networks:
+      - gryag-network
+
+networks:
+  gryag-network:
+    driver: bridge
+
+volumes:
+  gryag-data:
+    driver: local

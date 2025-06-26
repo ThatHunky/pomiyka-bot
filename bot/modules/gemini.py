@@ -1,4 +1,4 @@
-# Модуль для інтеграції з Gemini Flash 2.5 (псевдо-реалізація)
+# Модуль для інтеграції з Gemini (конфігуруємо модель)
 import aiohttp
 from aiogram.types import Message
 from . import context
@@ -6,7 +6,9 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+from bot.bot_config import GEMINI_MODEL
+
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 async def process_message(message: Message) -> str:

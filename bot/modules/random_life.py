@@ -7,8 +7,8 @@ import inspect
 
 # Слова-тригери для згадки бота
 TRIGGERS = [
-    os.getenv("BOT_PERSONA_NAME", "глек").lower(),
-    "@glek_bot", "глек", "глечик", "глечику", "глечика", "глечики", "бот", "боте"
+    os.getenv("BOT_PERSONA_NAME", "гряг").lower(),
+    "@gryag_bot", "гряг", "грягік", "грягу", "гряга", "грягом", "бот", "боте"
 ]
 
 # Можливі рандомні відповіді
@@ -30,7 +30,7 @@ def should_reply_randomly(text: str) -> bool:
 async def get_random_reply(context_messages: Optional[List[str]] = None) -> str:
     # Динамічна персона на основі контексту
     persona_base = (
-        "Ти — Глек, абсурдний, непередбачуваний, україномовний бот-дух чату. "
+        "Ти — Гряг, абсурдний, непередбачуваний, україномовний бот-дух чату. "
         "Ти можеш відповідати нісенітницями, філософськими парадоксами, жартами, мемами, загадками, або просто абсурдними фразами. "
         "Ти — не просто бот, а справжня сутність чату, яка живе своїм життям. "
         "Завжди підлаштовуй свою манеру під настрій і стиль останніх повідомлень у чаті. "
@@ -44,7 +44,7 @@ async def get_random_reply(context_messages: Optional[List[str]] = None) -> str:
     class FakeMessage:
         def __init__(self, text: str):
             self.text = text
-            self.from_user = type('User', (), {'full_name': 'Глек'})
+            self.from_user = type('User', (), {'full_name': 'Гряг'})
             self.chat = type('Chat', (), {'id': 0})
     fake_msg = FakeMessage(prompt)
     reply = await gemini.process_message(fake_msg)
