@@ -179,3 +179,16 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Bot-specific files
+data/
+*.db
+*.json
+
+# Release archives and versions
+gryag-bot-*.zip
+gryag-bot-*.tar.gz
+*-release*.zip
+*-release*.tar.gz
+*-v*.zip
+*-v*.tar.gz

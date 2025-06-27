@@ -1,13 +1,14 @@
 # Модуль для роботи з контекстом у SQLite
 import sqlite3
-from aiogram.types import Message
-from datetime import datetime
 import os
+import logging
+from aiogram.types import Message
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
 from bot.bot_config import DB_PATH
 
-# Ініціалізація бази
-
-def init_db():
+def init_db() -> None:
+    """Ініціалізує базу даних SQLite для збереження контексту"""
     # Створюємо директорію якщо не існує
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -25,27 +26,39 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Зберегти повідомлення
+def save_message(message: Message, media_id: Optional[str] = None, media_type: Optional[str] = None) -> None:
+    """Зберігає повідомлення в базу даних"""
+    try:
+        init_db()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        user_name = getattr(message.from_user, 'full_name', 'Невідомий') if message.from_user else 'Невідомий'
+        c.execute("INSERT INTO messages (chat_id, user_id, user_name, text, timestamp, media_id, media_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (message.chat.id, 
+             message.from_user.id if message.from_user else 0, 
+             user_name, 
+             message.text, 
+             datetime.now(timezone.utc).isoformat(), 
+             media_id, 
+             media_type))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Помилка збереження повідомлення: {e}")
 
-def save_message(message: Message, media_id=None, media_type=None):
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO messages (chat_id, user_id, user_name, text, timestamp, media_id, media_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (message.chat.id, message.from_user.id, message.from_user.full_name, message.text, datetime.utcnow().isoformat(), media_id, media_type))
-    conn.commit()
-    conn.close()
-
-# Отримати останні N повідомлень чату
-
-def get_context(chat_id, limit=1000):
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT user_name, text FROM messages WHERE chat_id=? ORDER BY id DESC LIMIT ?", (chat_id, limit))
-    rows = c.fetchall()
-    conn.close()
-    return [{"user": row[0], "text": row[1]} for row in reversed(rows)]
+def get_context(chat_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
+    """Отримує останні N повідомлень чату"""
+    try:
+        init_db()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT user_name, text FROM messages WHERE chat_id=? ORDER BY id DESC LIMIT ?", (chat_id, limit))
+        rows = c.fetchall()
+        conn.close()
+        return [{"user": row[0], "text": row[1]} for row in reversed(rows)]
+    except Exception as e:
+        logging.error(f"Помилка отримання контексту: {e}")
+        return []
 
 # Імпорт історії з Telegram JSON
 

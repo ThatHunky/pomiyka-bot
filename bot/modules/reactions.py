@@ -1,7 +1,9 @@
 # Модуль для реакцій на повідомлення
 import random
 import asyncio
+import logging
 from aiogram.types import Message
+from typing import List
 from bot.bot_config import PERSONA
 
 # Набір емоджі для реакцій (підтримується Telegram)
@@ -43,7 +45,8 @@ def should_react_to_message(message: Message) -> bool:
         return random.random() < 0.4  # 40% шанс на емоційні слова
     
     # Рандомна реакція на звичайні повідомлення (рідко)
-    return random.random() < PERSONA.get("reaction_chance", 0.05)  # 5% базовий шанс
+    reaction_chance = PERSONA.get("reaction_chance", 0.05)
+    return random.random() < reaction_chance
 
 def get_reaction_for_message(message: Message) -> str:
     """Вибирає підходящу реакцію для повідомлення"""
@@ -83,17 +86,17 @@ async def maybe_react_to_message(message: Message) -> bool:
             # Невелика затримка щоб виглядало природно
             await asyncio.sleep(random.uniform(0.5, 2.0))
             
-            # Ставимо реакцію
-            await message.react(reaction)
+            # Ставимо реакцію (треба передати як список)
+            from aiogram.types import ReactionTypeEmoji
+            await message.react([ReactionTypeEmoji(emoji=reaction)])
             return True
             
     except Exception as e:
         # Якщо реакція не вдалася (наприклад, бот не має прав), просто ігноруємо
-        import logging
         logging.debug(f"Не вдалося поставити реакцію: {e}")
         
     return False
 
-def get_all_available_reactions() -> list:
+def get_all_available_reactions() -> List[str]:
     """Повертає список всіх доступних реакцій"""
     return REACTION_EMOJIS.copy()

@@ -100,6 +100,28 @@ async def handle(message: Message):
         except Exception as e:
             await message.reply(f"❌ Помилка отримання аналітики: {e}")
             return
+    
+    elif message.text == "/health":
+        try:
+            from bot.modules.health_checker import health_checker
+            
+            status = health_checker.get_health_status()
+            
+            health_text = f"""🏥 Стан бота:
+            
+🔋 Статус: {status['status']}
+⏰ Час роботи: {status['uptime_formatted']}
+📨 Оброблено повідомлень: {status['messages_processed']}
+❌ Помилки API: {status['api_errors']}
+💾 Пам'ять: {status['memory_usage']}
+
+✅ Бот працює нормально!"""
+            
+            await message.reply(health_text)
+            return
+        except Exception as e:
+            await message.reply(f"❌ Помилка отримання стану: {e}")
+            return
 
     elif message.text == "/reactions":
         try:
@@ -112,6 +134,16 @@ async def handle(message: Message):
             return
         except Exception as e:
             await message.reply(f"❌ Помилка отримання реакцій: {e}")
+            return
+    
+    elif message.text == "/backup":
+        try:
+            from bot.modules.backup_manager import backup_database
+            backup_path = backup_database()
+            await message.reply(f"✅ Резервну копію створено: {backup_path}")
+            return
+        except Exception as e:
+            await message.reply(f"❌ Помилка резервного копіювання: {e}")
             return
     
     # Всі інші команди через абсурдного Гряга

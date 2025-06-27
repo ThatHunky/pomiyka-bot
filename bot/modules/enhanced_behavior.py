@@ -2,8 +2,10 @@
 import time
 import random
 import re
+import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
+from typing import Dict, List, Any, Optional, Tuple
 from bot.bot_config import PERSONA
 
 # Розширені патерни для аналізу розмов
@@ -48,11 +50,11 @@ MOOD_INDICATORS = {
     "енергія": ["ого", "вау", "капець", "неймовірно", "🤯", "⚡", "🎉"]
 }
 
-# Історія для аналізу трендів
-chat_analysis_history = defaultdict(list)  # chat_id -> [analysis_data]
-last_intervention = defaultdict(float)  # chat_id -> timestamp
+# Історія для аналізу трендів  
+chat_analysis_history: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+last_intervention: Dict[int, float] = defaultdict(float)
 
-def analyze_conversation_context(message_text, recent_messages=None):
+def analyze_conversation_context(message_text: str, recent_messages: Optional[List[str]] = None) -> Dict[str, Any]:
     """Аналізує контекст розмови та повертає рекомендації для бота"""
     if not message_text:
         return {"type": "unknown", "mood": "neutral", "should_respond": False}
@@ -83,7 +85,7 @@ def analyze_conversation_context(message_text, recent_messages=None):
         "keywords": extract_keywords(text)
     }
 
-def detect_conversation_type(text):
+def detect_conversation_type(text: str) -> str:
     """Визначає тип розмови з покращеним аналізом"""
     scores = {}
     text_lower = text.lower()
@@ -117,7 +119,7 @@ def detect_conversation_type(text):
         return max(scores, key=scores.get)
     return "загальне"
 
-def detect_mood(text):
+def detect_mood(text: str) -> str:
     """Визначає настрій повідомлення"""
     scores = {}
     for mood, indicators in MOOD_INDICATORS.items():
@@ -128,7 +130,7 @@ def detect_mood(text):
         return max(scores, key=scores.get)
     return "нейтрал"
 
-def calculate_engagement_level(text, conv_type, mood):
+def calculate_engagement_level(text: str, conv_type: str, mood: str) -> int:
     """Розраховує рівень залученості бота (1-10)"""
     base_level = 3
     
@@ -336,3 +338,23 @@ def get_spontaneous_prompt_based_on_trends(chat_id):
         ]
     
     return random.choice(prompts)
+
+def cleanup_old_analysis_data(max_age_hours: int = 48):
+    """Очищає старі дані аналізу для економії пам'яті"""
+    current_time = time.time()
+    cutoff_time = current_time - (max_age_hours * 3600)
+    
+    cleaned_chats = 0
+    for chat_id in list(chat_analysis_history.keys()):
+        original_count = len(chat_analysis_history[chat_id])
+        chat_analysis_history[chat_id] = [
+            analysis for analysis in chat_analysis_history[chat_id]
+            if analysis["timestamp"] > cutoff_time
+        ]
+        new_count = len(chat_analysis_history[chat_id])
+        
+        if new_count != original_count:
+            logging.info(f"Очищено {original_count - new_count} старих записів для чату {chat_id}")
+            cleaned_chats += 1
+    
+    return cleaned_chats
