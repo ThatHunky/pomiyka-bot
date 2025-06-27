@@ -33,9 +33,16 @@ async def process_message(message: Message) -> str:
         "Відповідай коротко та по суті, але з власним стилем. "
         f"{mood_hint} Твоє завдання — зробити спілкування приємнішим та цікавішим."
     )
-    prompt = persona_prompt + "\n" + "\n".join([f"{m['user']}: {m['text']}" for m in chat_context[-PERSONA['context_limit']:]])
+    # Формуємо історію діалогу
+    history = [f"{m['user']}: {m['text']}" for m in chat_context[-PERSONA['context_limit']:]]
+
+    # Гарантуємо, що підсумковий промпт не перевищує максимальний розмір
     last_text = message.text if message.text else '[медіа]'
-    prompt += f"\n{message.from_user.full_name}: {last_text}\n{PERSONA['name']}:"
+    suffix = f"\n{message.from_user.full_name}: {last_text}\n{PERSONA['name']}:"
+    prompt = persona_prompt + "\n" + "\n".join(history) + suffix
+    while len(prompt) > PERSONA['max_context_size'] and history:
+        history.pop(0)
+        prompt = persona_prompt + "\n" + "\n".join(history) + suffix
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}]
