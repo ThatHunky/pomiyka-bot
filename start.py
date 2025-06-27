@@ -28,6 +28,13 @@ except ImportError as e:
     print("   pip install -r requirements.txt")
     sys.exit(1)
 
+# Автоматичний backup при старті
+try:
+    from bot.modules.backup_manager import backup_database
+    backup_database()
+except Exception as e:
+    print(f"[WARN] Не вдалося створити резервну копію при старті: {e}")
+
 # Запускаємо бота
 if __name__ == "__main__":
     print("🤖 Запускаю Гряг-бота...")
