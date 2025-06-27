@@ -13,16 +13,16 @@ PERSONA = {
     "context_limit": int(os.getenv("BOT_CONTEXT_LIMIT", 1000)),
     "reply_timeout": int(os.getenv("BOT_REPLY_TIMEOUT", 10)),
     "admin_id": int(os.getenv("ADMIN_ID", 392817811)),
-    "random_reply_chance": float(os.getenv("BOT_RANDOM_REPLY_CHANCE", 0.5)),
+    "random_reply_chance": float(os.getenv("BOT_RANDOM_REPLY_CHANCE", 0.3)),
     "max_context_size": int(os.getenv("BOT_MAX_CONTEXT_SIZE", 10000)),
     # Анти-спам
-    "smart_reply_chance": float(os.getenv("BOT_SMART_REPLY_CHANCE", 0.1)),
-    "min_silence_minutes": int(os.getenv("BOT_MIN_SILENCE_MINUTES", 15)),
-    "max_replies_per_hour": int(os.getenv("BOT_MAX_REPLIES_PER_HOUR", 3)),
+    "smart_reply_chance": float(os.getenv("BOT_SMART_REPLY_CHANCE", 0.05)),
+    "min_silence_minutes": int(os.getenv("BOT_MIN_SILENCE_MINUTES", 20)),
+    "max_replies_per_hour": int(os.getenv("BOT_MAX_REPLIES_PER_HOUR", 2)),
     "trigger_keywords": os.getenv("BOT_TRIGGER_KEYWORDS", "гряг,@gryag_bot,грягік,бот").split(","),
     # Автономність
     "autonomous_mode": os.getenv("BOT_AUTONOMOUS_MODE", "true").lower() == "true",
-    "spontaneous_chance": float(os.getenv("BOT_SPONTANEOUS_CHANCE", 0.02)),
+    "spontaneous_chance": float(os.getenv("BOT_SPONTANEOUS_CHANCE", 0.01)),
     "spontaneous_min_pause": int(os.getenv("BOT_SPONTANEOUS_MIN_PAUSE", 30)),  # хвилин між спонтанними
     # Агресивний троттлінг
     "spam_threshold": int(os.getenv("BOT_SPAM_THRESHOLD", 5)),  # повідомлень за хвилину

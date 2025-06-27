@@ -11,9 +11,10 @@ from bot.bot_config import GEMINI_MODEL
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-async def process_message(message: Message) -> str:
+async def process_message(message: Message, tone_instruction: str | None = None) -> str:
     from bot.bot_config import PERSONA
     chat_context = context.get_context(message.chat.id)
+    
     # Додаємо абсурдну інструкцію та динамічний опис обстановки
     last_msgs = [m['text'] for m in chat_context[-5:]]
     mood_hint = ""
@@ -25,15 +26,25 @@ async def process_message(message: Message) -> str:
         mood_hint = "В чаті тиша."
     else:
         mood_hint = "В чаті звичайна активність."
+    
+    # Базова персона
     persona_prompt = (
-        f"Ти — {PERSONA['name']}, дружелюбний україномовний чат-бот з легким абсурдним гумором. "
-        "Ти розумний, кмітливий та завжди готовий допомогти чи підтримати розмову. "
-        "Твій гумор — це легка іронія, каламбури та незвичайні асоціації, але ти залишаєшся зрозумілим. "
-        "Ти не божевільний, а просто трохи ексцентричний та креативний у своїх відповідях. "
-        "Відповідай коротко та по суті, але з власним стилем. "
-        f"{mood_hint} Твоє завдання — зробити спілкування приємнішим та цікавішим."
+        f"Ти — {PERSONA['name']}, дружелюбний україномовний чат-бот з легким гумором. "
+        "Ти розумний, корисний та завжди готовий допомогти чи підтримати розмову. "
+        "Твій стиль — це легкий гумор, дружелюбність та корисні поради. "
+        "Ти адекватний, розумний та приємний у спілкуванні. "
+        "Відповідай коротко, зрозуміло та по суті. "
+        f"{mood_hint} Твоє завдання — бути корисним та приємним співрозмовником."
     )
+    
+    # Додаємо спеціальну інструкцію тону, якщо є
+    if tone_instruction:
+        persona_prompt += f"\n\nСпеціальна інструкція: {tone_instruction}"
+    
+    # Формуємо повний промт з контекстом
     prompt = persona_prompt + "\n" + "\n".join([f"{m['user']}: {m['text']}" for m in chat_context[-PERSONA['context_limit']:]])
+    
+    # Додаємо поточне повідомлення
     last_text = message.text if message.text else '[медіа]'
     prompt += f"\n{message.from_user.full_name}: {last_text}\n{PERSONA['name']}:"
     headers = {"Content-Type": "application/json"}

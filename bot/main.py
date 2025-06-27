@@ -171,19 +171,11 @@ async def universal_handler(message: Message):
                 
                 # Якщо аналіз рекомендує відповісти
                 if analysis['should_respond']:
-                    # Створюємо контекстно-свідомий промт
-                    context_prompt = enhanced_behavior.create_context_aware_prompt(message.text, analysis)
+                    # Отримуємо інструкцію тону
+                    tone_instruction = enhanced_behavior.get_tone_instruction(analysis)
                     
-                    # Створюємо фейкове повідомлення з покращеним промтом
-                    class EnhancedFakeMessage:
-                        def __init__(self, original_message, enhanced_prompt):
-                            self.text = enhanced_prompt
-                            self.from_user = original_message.from_user
-                            self.chat = original_message.chat
-                            self.original_text = original_message.text
-                    
-                    enhanced_msg = EnhancedFakeMessage(message, context_prompt)
-                    reply = await gemini.process_message(enhanced_msg)
+                    # Передаємо оригінальне повідомлення та інструкцію тону в Gemini
+                    reply = await gemini.process_message(message, tone_instruction)
                     await safe_reply(message, reply)
                     smart_behavior.mark_bot_activity(chat_id)
                     return
