@@ -10,6 +10,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 from aiogram.types import Message
 from . import context
+from .token_counter import token_counter
 import os
 from dotenv import load_dotenv
 from bot.bot_config import GEMINI_MODEL, PERSONA
@@ -613,9 +614,14 @@ async def process_message(message: Message, tone_instruction: Optional[str] = No
             "Дай коротку, природну відповідь українською мовою."
         )
         
-        # Компресія промпту якщо потрібно
-        max_size = recommendations.get('max_context_size', PERSONA['max_context_size'])
-        while len(prompt) > max_size and history:
+        # Компресія промпту якщо потрібно з урахуванням токенів
+        max_tokens = PERSONA.get('max_context_tokens', 800000)
+        
+        # Оцінюємо поточну кількість токенів
+        current_tokens = token_counter.estimate_tokens(prompt)
+        
+        while current_tokens > max_tokens and history:
+            # Видаляємо найстарші повідомлення
             history.pop(0)
             dialogue_context = "\n".join(history)
             prompt = (
@@ -623,6 +629,9 @@ async def process_message(message: Message, tone_instruction: Optional[str] = No
                 f"Поточне повідомлення від {user_name}: {last_text}\n"
                 "Дай коротку, природну відповідь українською мовою."
             )
+            current_tokens = token_counter.estimate_tokens(prompt)
+        
+        logging.info(f"Фінальний промпт: ~{current_tokens} токенів з {len(history)} повідомлень")
         
         # Генеруємо відповідь
         client = await get_client()

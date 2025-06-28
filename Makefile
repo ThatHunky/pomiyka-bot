@@ -122,3 +122,12 @@ ci: lint test ## CI пайплайн
 
 build-release: clean test docker-build ## Повна збірка релізу
 	@echo "$(GREEN)🎉 Реліз готовий!$(NC)"
+
+# Нові команди для покращень Фази 1
+monitor: ## Запуск веб-дашборду моніторингу
+	@echo "$(GREEN)📊 Запуск веб-дашборду...$(NC)"
+	python -c "from bot.modules.web_dashboard import start_dashboard; start_dashboard()"
+
+validate-config: ## Валідація конфігурації
+	@echo "$(GREEN)🔧 Валідація конфігурації...$(NC)"
+	python -c "from bot.modules.config_validator import ConfigValidator; ConfigValidator().validate_all()"

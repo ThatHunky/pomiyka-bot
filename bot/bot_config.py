@@ -15,7 +15,11 @@ PERSONA: Dict[str, Any] = {
     "reply_timeout": int(os.getenv("BOT_REPLY_TIMEOUT", "10")),
     "admin_id": int(os.getenv("ADMIN_ID", "392817811")),
     "random_reply_chance": float(os.getenv("BOT_RANDOM_REPLY_CHANCE", "0.20")),  # зменшено з 0.25
-    "max_context_size": int(os.getenv("BOT_MAX_CONTEXT_SIZE", "10000")),
+    "max_context_size": int(os.getenv("BOT_MAX_CONTEXT_SIZE", "10000")),  # символів (застаріло)
+    # Нові налаштування для токенів Gemini 2.5 Flash (1M токенів)
+    "max_context_tokens": int(os.getenv("BOT_MAX_CONTEXT_TOKENS", "800000")),  # 80% від 1M токенів
+    "context_char_estimate": int(os.getenv("BOT_CONTEXT_CHAR_ESTIMATE", "2000000")),  # ~2M символів безпечно
+    "tokens_per_char_ukrainian": float(os.getenv("BOT_TOKENS_PER_CHAR", "0.4")),  # 1 токен ≈ 2.5 символа для української
     # Анти-спам (зменшено агресивність)
     "smart_reply_chance": float(os.getenv("BOT_SMART_REPLY_CHANCE", "0.03")),  # зменшено з 0.04
     "min_silence_minutes": int(os.getenv("BOT_MIN_SILENCE_MINUTES", "30")),  # збільшено з 25

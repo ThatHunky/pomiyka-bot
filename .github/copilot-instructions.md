@@ -130,6 +130,7 @@ globs: *
 *   The bot's level of schizoid behavior should be reduced.
 *   The bot's standard security settings should be lowered to the minimum level.
 *   Consider integrating a local language model for analyzing conversations, summarizing elements, and then passing relevant information to Gemini.
+*   A comprehensive codebase review should be conducted to identify potential areas for improvement or issues.
 
 ## DEBUGGING
 

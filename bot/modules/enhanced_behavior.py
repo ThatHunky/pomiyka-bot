@@ -8,6 +8,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from aiogram.types import Message
 from bot.bot_config import PERSONA
 from . import context_sqlite
+from .token_counter import token_counter
 import logging
 
 # Налаштування логування для модуля
@@ -373,39 +374,29 @@ def _get_spam_adjusted_reply_chance(spam_level: str) -> float:
         return base_chance
 
 def compress_context_smartly(context: List[Dict[str, Any]], max_context_size: int = 100) -> List[Dict[str, Any]]:
-    """Розумно стискає контекст, зберігаючи найважливіші повідомлення"""
-    if len(context) <= max_context_size:
+    """
+    Розумно стискає контекст, зберігаючи найважливіші повідомлення.
+    Тепер використовує підрахунок токенів замість кількості повідомлень.
+    """
+    if not context:
         return context
     
-    # Розділяємо повідомлення на категорії важливості
-    important_messages = []
-    regular_messages = []
+    # Використовуємо нові параметри для токенів
+    max_tokens = PERSONA.get('max_context_tokens', 800000)
     
-    for msg in context:
-        text = msg.get('text', '').lower()
-        
-        # Важливі повідомлення: згадки бота, питання, довгі повідомлення
-        if (any(trigger in text for trigger in PERSONA.get("trigger_keywords", [])) or
-            '?' in text or len(text) > 100):
-            important_messages.append(msg)
-        else:
-            regular_messages.append(msg)
+    # Якщо параметр max_context_size передано як кількість повідомлень, 
+    # конвертуємо в токени (для зворотної сумісності)
+    if max_context_size < 10000:  # Якщо це кількість повідомлень
+        estimated_tokens_per_message = 50  # Середня оцінка
+        max_tokens = min(max_tokens, max_context_size * estimated_tokens_per_message)
     
-    # Зберігаємо всі важливі повідомлення + частину звичайних
-    remaining_space = max_context_size - len(important_messages)
+    # Використовуємо token_counter для оптимального стискання
+    compressed = token_counter.compress_context_by_tokens(context, max_tokens)
     
-    if remaining_space > 0:
-        # Беремо найновіші звичайні повідомлення
-        selected_regular = regular_messages[-remaining_space:]
-        compressed_context = important_messages + selected_regular
-    else:
-        # Якщо важливих повідомлень занадто багато, беремо найновіші
-        compressed_context = important_messages[-max_context_size:]
+    logger.info(f"Контекст стиснено: {len(context)} -> {len(compressed)} повідомлень, "
+                f"~{token_counter.estimate_context_tokens(compressed)} токенів")
     
-    # Сортуємо за часом
-    compressed_context.sort(key=lambda x: x.get('timestamp', 0))
-    
-    return compressed_context
+    return compressed
 
 def analyze_context_quality(context: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Аналізує якість контексту для покращення відповідей"""

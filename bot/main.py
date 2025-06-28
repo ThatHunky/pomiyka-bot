@@ -1,4 +1,4 @@
-# Основний файл запуску Telegram-бота
+# Основний файл запуску Telegram-бота з покращеннями
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
 from aiogram.filters import CommandStart
@@ -14,7 +14,29 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from typing import Optional, Dict, Any
 import signal
 
+# Імпорт нових модулів покращень
+from bot.modules.config_validator import validate_startup_config, quick_validate
+from bot.modules.performance_monitor import (
+    performance_monitor, start_monitoring_task, 
+    record_api_call, record_message_processed, get_health_status
+)
+from bot.modules.security_manager import SecurityManager, validate_message_security, check_rate_limit
+
+# Імпорт функцій очищення для memory management  
+from bot.modules.local_analyzer import get_analyzer
+from bot.modules.enhanced_behavior import cleanup_old_analysis_data
+
+# Перевірка конфігурації при старті
 load_dotenv()
+
+# Швидка валідація критичних параметрів
+if not quick_validate():
+    raise ValueError("Критичні змінні середовища відсутні")
+
+# Повна валідація конфігурації
+if not validate_startup_config():
+    logging.warning("Конфігурація містить попередження, але бот може працювати")
+
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not API_TOKEN:
@@ -25,6 +47,9 @@ logging.basicConfig(level=logging.INFO)
 # Глобальний бот для доступу з інших модулів (наприклад, /rescan)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
+
+# Ініціалізація Security Manager
+security_manager = SecurityManager()
 
 def validate_config() -> None:
     """Перевіряє наявність критичних змінних середовища."""
@@ -155,6 +180,19 @@ async def universal_handler(message: Message) -> None:
             chat_id = message.chat.id
             user_id = message.from_user.id
             
+            # ===== БЕЗПЕКА ТА ВАЛІДАЦІЯ =====
+            # Перевіряємо безпеку повідомлення
+            if message.text:
+                is_safe, security_reason = security_manager.validate_message(message.text, user_id)
+                if not is_safe:
+                    logging.warning(f"Небезпечне повідомлення від {user_id}: {security_reason}")
+                    return
+            
+            # Перевіряємо rate limiting
+            if not security_manager.rate_limit_check(user_id):
+                logging.info(f"Rate limit exceeded for user {user_id}")
+                return
+            
             # Відстежуємо активність користувача для анти-спам системи
             smart_behavior.track_user_activity(chat_id, user_id)
             
@@ -171,7 +209,8 @@ async def universal_handler(message: Message) -> None:
                 await chat_scanner.auto_scan_chat_history(bot, chat_id)
             
             # Завжди зберігаємо контекст
-            context.save_message(message)
+            from bot.modules.context_sqlite import save_message
+            await save_message(message)
             
             # Можливо ставимо реакцію (перед іншими відповідями)
             reaction_posted = await reactions.maybe_react_to_message(message)
@@ -179,7 +218,8 @@ async def universal_handler(message: Message) -> None:
             # СПРОЩЕНА ЛОГІКА З ПОКРАЩЕНИМ КОНТЕКСТОМ
             if message.text:
                 # Отримуємо контекст чату з іменами користувачів
-                chat_context = context.get_context(chat_id)
+                from bot.modules.context_sqlite import get_context
+                chat_context = await get_context(chat_id)
                 user_name = getattr(message.from_user, 'full_name', 'Невідомий')
                 
                 # Використовуємо покращену логіку з enhanced_behavior
@@ -243,15 +283,71 @@ async def universal_handler(message: Message) -> None:
             random.random() < PERSONA["error_reply_chance"]):
             await safe_reply(message, "Ой, щось пішло не так... 🤖")
 
+async def memory_cleanup_task() -> None:
+    """Фонова задача для очищення пам'яті та застарілих даних"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Виконуємо кожну годину
+            
+            logging.info("Запуск задачі очищення пам'яті...")
+            
+            # Очищення старих даних аналізу (7 днів)
+            try:
+                await cleanup_old_analysis_data(days=7)
+                logging.info("Очищення enhanced_behavior даних завершено")
+            except Exception as e:
+                logging.error(f"Помилка очищення enhanced_behavior: {e}")
+            
+            # Очищення кешу локального аналізатора
+            try:
+                analyzer = get_analyzer()
+                if hasattr(analyzer, 'cleanup_old_data'):
+                    analyzer.cleanup_old_data(days=7)
+                    logging.info("Очищення local_analyzer кешу завершено")
+            except Exception as e:
+                logging.error(f"Помилка очищення local_analyzer: {e}")
+                
+            # Експорт метрик продуктивності
+            try:
+                performance_monitor.export_metrics()
+                logging.info("Експорт метрик продуктивності завершено")
+            except Exception as e:
+                logging.error(f"Помилка експорту метрик: {e}")
+                
+            logging.info("Задача очищення пам'яті завершена успішно")
+                
+        except Exception as e:
+            logging.error(f"Критична помилка в memory_cleanup_task: {e}")
+            await asyncio.sleep(300)  # Затримка при помилці
+
+async def database_initialization_task() -> None:
+    """Ініціалізація всіх асинхронних баз даних при старті"""
+    try:
+        logging.info("Ініціалізація асинхронних баз даних...")
+        
+        # Ініціалізуємо context database
+        from bot.modules.context_sqlite import init_db
+        await init_db()
+        
+        # Ініціалізуємо local analyzer database
+        analyzer = get_analyzer()
+        if hasattr(analyzer, '_ensure_db_initialized'):
+            await analyzer._ensure_db_initialized()
+        
+        logging.info("Ініціалізація асинхронних баз даних завершена")
+        
+    except Exception as e:
+        logging.error(f"Помилка ініціалізації баз даних: {e}")
+        raise
+
 async def spontaneous_activity_loop() -> None:
-    """Покращена фонова задача для спонтанної активності з аналізом трендів"""
     while True:
         try:
             await asyncio.sleep(300)  # Перевіряємо кожні 5 хвилин
             
             # Отримуємо список активних чатів
-            from bot.modules.context import get_active_chats
-            active_chats = get_active_chats()
+            from bot.modules.context_sqlite import get_active_chats
+            active_chats = await get_active_chats()
             
             for chat_id in active_chats:
                 # Використовуємо покращену логіку втручання
@@ -286,10 +382,19 @@ async def shutdown(dispatcher: Dispatcher) -> None:
 
 async def main() -> None:
     """Головна точка входу"""
+    
+    # Ініціалізація асинхронних баз даних при старті
+    await database_initialization_task()
+    
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(dp)))
+    
+    # Запускаємо фонові задачі
     asyncio.create_task(spontaneous_activity_loop())
+    asyncio.create_task(memory_cleanup_task())
+    asyncio.create_task(start_monitoring_task())
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

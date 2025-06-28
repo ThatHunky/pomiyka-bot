@@ -1,5 +1,6 @@
 # Модуль для роботи з контекстом у SQLite
-import sqlite3
+import aiosqlite
+import asyncio
 import json
 import logging
 import os
@@ -9,86 +10,110 @@ from typing import List, Dict, Any, Optional, Union
 
 from bot.bot_config import DB_PATH
 
-def init_db() -> None:
-    """Ініціалізує базу даних SQLite для збереження контексту"""
-    # Створюємо директорію якщо не існує
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    # Створюємо таблицю, якщо її немає
-    c.execute('''CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER,
-        user_id INTEGER,
-        text TEXT,
-        timestamp TEXT
-    )''')
-    # Перевіряємо схему та додаємо нові стовпці, якщо потрібно
-    c.execute("PRAGMA table_info(messages)")
-    existing_cols = [row[1] for row in c.fetchall()]
-    if 'user_name' not in existing_cols:
-        c.execute("ALTER TABLE messages ADD COLUMN user_name TEXT DEFAULT 'Невідомий'")
-    if 'media_id' not in existing_cols:
-        c.execute("ALTER TABLE messages ADD COLUMN media_id TEXT")
-    if 'media_type' not in existing_cols:
-        c.execute("ALTER TABLE messages ADD COLUMN media_type TEXT")
-    conn.commit()
-    conn.close()
+# Async lock для thread safety
+_db_lock = asyncio.Lock()
+_db_initialized = False
 
-def save_message(message: Message, media_id: Optional[str] = None, media_type: Optional[str] = None) -> None:
+async def init_db() -> None:
+    """Ініціалізує базу даних SQLite для збереження контексту"""
+    global _db_initialized
+    
+    async with _db_lock:
+        if _db_initialized:
+            return
+            
+        # Створюємо директорію якщо не існує
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        
+        async with aiosqlite.connect(DB_PATH) as conn:
+            # Створюємо таблицю, якщо її немає
+            await conn.execute('''CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                user_id INTEGER,
+                text TEXT,
+                timestamp TEXT
+            )''')
+            
+            # Перевіряємо схему та додаємо нові стовпці, якщо потрібно
+            cursor = await conn.execute("PRAGMA table_info(messages)")
+            existing_cols = [row[1] for row in await cursor.fetchall()]
+            
+            if 'user_name' not in existing_cols:
+                await conn.execute("ALTER TABLE messages ADD COLUMN user_name TEXT DEFAULT 'Невідомий'")
+            if 'media_id' not in existing_cols:
+                await conn.execute("ALTER TABLE messages ADD COLUMN media_id TEXT")
+            if 'media_type' not in existing_cols:
+                await conn.execute("ALTER TABLE messages ADD COLUMN media_type TEXT")
+            
+            # Створюємо індекси для кращої продуктивності
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_time ON messages(timestamp)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
+            
+            await conn.commit()
+        
+        _db_initialized = True
+        logging.info("База даних контексту ініціалізована з індексами")
+
+async def save_message(message: Message, media_id: Optional[str] = None, media_type: Optional[str] = None) -> None:
     """Зберігає повідомлення в базу даних"""
     try:
-        init_db()
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        user_name = getattr(message.from_user, 'full_name', 'Невідомий') if message.from_user else 'Невідомий'
-        c.execute("INSERT INTO messages (chat_id, user_id, user_name, text, timestamp, media_id, media_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (message.chat.id, 
-             message.from_user.id if message.from_user else 0, 
-             user_name, 
-             message.text, 
-             datetime.now(timezone.utc).isoformat(), 
-             media_id, 
-             media_type))
-        conn.commit()
-        conn.close()
+        await init_db()
+        
+        async with _db_lock:
+            async with aiosqlite.connect(DB_PATH) as conn:
+                user_name = getattr(message.from_user, 'full_name', 'Невідомий') if message.from_user else 'Невідомий'
+                await conn.execute(
+                    "INSERT INTO messages (chat_id, user_id, user_name, text, timestamp, media_id, media_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (message.chat.id, 
+                     message.from_user.id if message.from_user else 0, 
+                     user_name, 
+                     message.text, 
+                     datetime.now(timezone.utc).isoformat(), 
+                     media_id, 
+                     media_type))
+                await conn.commit()
     except Exception as e:
         logging.error(f"Помилка збереження повідомлення: {e}")
 
-def get_context(chat_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+async def get_context(chat_id: int, limit: int = 100) -> List[Dict[str, Any]]:
     """Отримує останні N повідомлень чату, включаючи імена користувачів."""
     try:
-        init_db()
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        # Додаємо user_name до запиту
-        c.execute("SELECT user_name, text FROM messages WHERE chat_id=? ORDER BY id DESC LIMIT ?", (chat_id, limit))
-        rows = c.fetchall()
-        conn.close()
+        await init_db()
+        
+        async with _db_lock:
+            async with aiosqlite.connect(DB_PATH) as conn:
+                cursor = await conn.execute(
+                    "SELECT user_name, text FROM messages WHERE chat_id=? ORDER BY id DESC LIMIT ?", 
+                    (chat_id, limit))
+                rows = await cursor.fetchall()
+        
         # Повертаємо список словників з іменами користувачів та текстом
-        return [{"user_name": row[0], "text": row[1]} for row in reversed(rows)]
+        rows_list = list(rows)
+        return [{"user_name": row[0], "text": row[1]} for row in reversed(rows_list)]
     except Exception as e:
         logging.error(f"Помилка отримання контексту: {e}")
         return []
 
-def get_recent_messages(chat_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+async def get_recent_messages(chat_id: int, limit: int = 100) -> List[Dict[str, Any]]:
     """Отримує останні N повідомлень чату з повною інформацією про користувачів."""
     try:
-        init_db()
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        # Отримуємо повну інформацію про повідомлення
-        c.execute("""SELECT user_name, text, timestamp, user_id, media_type 
-                     FROM messages 
-                     WHERE chat_id=? 
-                     ORDER BY id DESC 
-                     LIMIT ?""", (chat_id, limit))
-        rows = c.fetchall()
-        conn.close()
+        await init_db()
+        
+        async with _db_lock:
+            async with aiosqlite.connect(DB_PATH) as conn:
+                cursor = await conn.execute("""SELECT user_name, text, timestamp, user_id, media_type 
+                         FROM messages 
+                         WHERE chat_id=? 
+                         ORDER BY id DESC 
+                         LIMIT ?""", (chat_id, limit))
+                rows = await cursor.fetchall()
         
         # Повертаємо список словників з повною інформацією
         messages = []
-        for row in reversed(rows):
+        rows_list = list(rows)
+        for row in reversed(rows_list):
             messages.append({
                 "full_name": row[0] or "Невідомий",
                 "username": row[0] or "Невідомий", 
@@ -103,23 +128,21 @@ def get_recent_messages(chat_id: int, limit: int = 100) -> List[Dict[str, Any]]:
         logging.error(f"Помилка отримання останніх повідомлень: {e}")
         return []
 
-def add_message_to_context(chat_id: int, user_name: str, text: str, is_bot: bool = False) -> None:
+async def add_message_to_context(chat_id: int, user_name: str, text: str, is_bot: bool = False) -> None:
     """Додає повідомлення до контексту."""
     try:
-        init_db()
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("""INSERT INTO messages (chat_id, user_name, text, timestamp, user_id) 
-                     VALUES (?, ?, ?, ?, ?)""",
-                  (chat_id, user_name, text, datetime.now(timezone.utc).isoformat(), 0))
-        conn.commit()
-        conn.close()
+        await init_db()
+        
+        async with _db_lock:
+            async with aiosqlite.connect(DB_PATH) as conn:
+                await conn.execute("""INSERT INTO messages (chat_id, user_name, text, timestamp, user_id) 
+                         VALUES (?, ?, ?, ?, ?)""",
+                          (chat_id, user_name, text, datetime.now(timezone.utc).isoformat(), 0))
+                await conn.commit()
     except Exception as e:
         logging.error(f"Помилка додавання повідомлення до контексту: {e}")
 
-# Імпорт історії з Telegram JSON
-
-def import_telegram_history(json_path: str, chat_id: int) -> None:
+async def import_telegram_history(json_path: str, chat_id: int) -> None:
     """Імпортує історію чату з JSON файлу Telegram"""
     try:
         with open(json_path, "r", encoding="utf-8") as f:
@@ -138,7 +161,7 @@ def import_telegram_history(json_path: str, chat_id: int) -> None:
                 text = str(text_or_parts)
             
             timestamp: str = msg.get("date", datetime.now(timezone.utc).isoformat())
-            save_message_obj(chat_id, user, text, timestamp)
+            await save_message_obj(chat_id, user, text, timestamp)
         logging.info(f"Імпортовано історію для чату {chat_id} з {json_path}")
     except FileNotFoundError:
         logging.error(f"Файл не знайдено: {json_path}")
@@ -148,46 +171,57 @@ def import_telegram_history(json_path: str, chat_id: int) -> None:
         logging.error(f"Невідома помилка під час імпорту історії: {e}")
 
 
-def save_message_obj(chat_id: int, user: str, text: str, timestamp: str) -> None:
+async def save_message_obj(chat_id: int, user: str, text: str, timestamp: str) -> None:
     """Зберігає одне повідомлення в БД"""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO messages (chat_id, user_name, text, timestamp) VALUES (?, ?, ?, ?)",
-        (chat_id, user, text, timestamp))
-    conn.commit()
-    conn.close()
+    await init_db()
+    
+    async with _db_lock:
+        async with aiosqlite.connect(DB_PATH) as conn:
+            await conn.execute(
+                "INSERT INTO messages (chat_id, user_name, text, timestamp) VALUES (?, ?, ?, ?)",
+                (chat_id, user, text, timestamp))
+            await conn.commit()
 
-def get_chat_stats(chat_id: int) -> Dict[str, int]:
+async def get_chat_stats(chat_id: int) -> Dict[str, int]:
     """Статистика чату"""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (chat_id,))
-    total = c.fetchone()[0]
-    c.execute("SELECT COUNT(DISTINCT user_name) FROM messages WHERE chat_id=?", (chat_id,))
-    users = c.fetchone()[0]
-    conn.close()
+    await init_db()
+    
+    async with _db_lock:
+        async with aiosqlite.connect(DB_PATH) as conn:
+            cursor = await conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id=?", (chat_id,))
+            result = await cursor.fetchone()
+            total = result[0] if result else 0
+            
+            cursor = await conn.execute("SELECT COUNT(DISTINCT user_name) FROM messages WHERE chat_id=?", (chat_id,))
+            result = await cursor.fetchone()
+            users = result[0] if result else 0
+    
     return {"total_messages": total, "unique_users": users}
 
-def get_global_stats():
+async def get_global_stats() -> Dict[str, int]:
     """Загальна статистика по всіх чатах"""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM messages")
-    total_messages = c.fetchone()[0]
-    c.execute("SELECT COUNT(DISTINCT chat_id) FROM messages")
-    active_chats = c.fetchone()[0]
-    conn.close()
+    await init_db()
+    
+    async with _db_lock:
+        async with aiosqlite.connect(DB_PATH) as conn:
+            cursor = await conn.execute("SELECT COUNT(*) FROM messages")
+            result = await cursor.fetchone()
+            total_messages = result[0] if result else 0
+            
+            cursor = await conn.execute("SELECT COUNT(DISTINCT chat_id) FROM messages")
+            result = await cursor.fetchone()
+            active_chats = result[0] if result else 0
+    
     return {"total_messages": total_messages, "active_chats": active_chats}
 
-def get_active_chats():
+async def get_active_chats() -> List[int]:
     """Повертає список активних чатів (ID)"""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT DISTINCT chat_id FROM messages")
-    chat_ids = [row[0] for row in c.fetchall()]
-    conn.close()
+    await init_db()
+    
+    async with _db_lock:
+        async with aiosqlite.connect(DB_PATH) as conn:
+            cursor = await conn.execute("SELECT DISTINCT chat_id FROM messages")
+            rows = await cursor.fetchall()
+            chat_ids = [row[0] for row in rows]
+    
     return chat_ids

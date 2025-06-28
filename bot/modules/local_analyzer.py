@@ -1,6 +1,7 @@
 # Локальний аналізатор для розмов - оптимізовано для i5-6500, 16GB RAM
 import json
 import sqlite3
+import aiosqlite
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -26,6 +27,10 @@ except ImportError:
 
 from bot.bot_config import *
 
+# Глобальний екземпляр аналізатора та lock для thread safety
+_analyzer_instance = None
+_analyzer_lock = asyncio.Lock()
+
 class LocalAnalyzer:
     """Локальний аналізатор розмов з оптимізацією для обмежених ресурсів"""
     
@@ -36,9 +41,7 @@ class LocalAnalyzer:
         self.embedding_cache = {}
         self.analysis_cache = {}
         self.batch_size = 5  # Оптимально для i5-6500
-        
-        # Ініціалізація бази даних для кешування
-        self._init_database()
+        self._db_initialized = False
         
         # Завантаження моделей
         self._load_models()
@@ -48,53 +51,61 @@ class LocalAnalyzer:
         
         # Тематичні ключові слова
         self._init_topic_keywords()
+    
+    async def _ensure_db_initialized(self):
+        """Переконується що база даних ініціалізована"""
+        if not self._db_initialized:
+            await self._init_database()
+            self._db_initialized = True
 
-    def _init_database(self):
+    async def _init_database(self):
         """Ініціалізація бази даних для кешування"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Таблиця для кешування векторних представлень
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS embeddings_cache (
-                    text_hash TEXT PRIMARY KEY,
-                    embedding BLOB,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Таблиця для кешування аналізу
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS analysis_cache (
-                    text_hash TEXT PRIMARY KEY,
-                    emotion TEXT,
-                    topic TEXT,
-                    confidence REAL,
-                    keywords TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Таблиця для збереження підсумків розмов
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS conversation_summaries (
-                    chat_id INTEGER,
-                    time_period TEXT,
-                    summary TEXT,
-                    dominant_emotion TEXT,
-                    main_topics TEXT,
-                    participants_count INTEGER,
-                    message_count INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (chat_id, time_period)
-                )
-            ''')
-            
-            conn.commit()
-            conn.close()
-            logging.info("База даних локального аналізатора ініціалізована")
-            
+            async with aiosqlite.connect(self.db_path) as conn:
+                # Таблиця для кешування векторних представлень
+                await conn.execute('''
+                    CREATE TABLE IF NOT EXISTS embeddings_cache (
+                        text_hash TEXT PRIMARY KEY,
+                        embedding BLOB,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Таблиця для кешування аналізу
+                await conn.execute('''
+                    CREATE TABLE IF NOT EXISTS analysis_cache (
+                        text_hash TEXT PRIMARY KEY,
+                        emotion TEXT,
+                        topic TEXT,
+                        confidence REAL,
+                        keywords TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Таблиця для збереження підсумків розмов
+                await conn.execute('''
+                    CREATE TABLE IF NOT EXISTS conversation_summaries (
+                        chat_id INTEGER,
+                        time_period TEXT,
+                        summary TEXT,
+                        dominant_emotion TEXT,
+                        main_topics TEXT,
+                        participants_count INTEGER,
+                        message_count INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (chat_id, time_period)
+                    )
+                ''')
+                
+                # Додаємо індекси для оптимізації
+                await conn.execute('CREATE INDEX IF NOT EXISTS idx_analysis_hash ON analysis_cache(text_hash)')
+                await conn.execute('CREATE INDEX IF NOT EXISTS idx_embeddings_hash ON embeddings_cache(text_hash)')
+                await conn.execute('CREATE INDEX IF NOT EXISTS idx_summaries_chat ON conversation_summaries(chat_id)')
+                
+                await conn.commit()
+                logging.info("База даних локального аналізатора ініціалізована")
+                
         except Exception as e:
             logging.error(f"Помилка ініціалізації бази даних: {e}")
 
@@ -186,58 +197,56 @@ class LocalAnalyzer:
         """Генерує хеш для тексту для кешування"""
         return hashlib.md5(text.encode('utf-8')).hexdigest()
 
-    def get_cached_analysis(self, text: str) -> Optional[Dict[str, Any]]:
+    async def get_cached_analysis(self, text: str) -> Optional[Dict[str, Any]]:
         """Отримує закешований аналіз тексту"""
+        await self._ensure_db_initialized()
         text_hash = self.get_text_hash(text)
         
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT emotion, topic, confidence, keywords 
-                FROM analysis_cache 
-                WHERE text_hash = ? AND created_at > datetime('now', '-24 hours')
-            ''', (text_hash,))
-            
-            result = cursor.fetchone()
-            conn.close()
-            
-            if result:
-                return {
-                    "emotion": result[0],
-                    "topic": result[1],
-                    "confidence": result[2],
-                    "keywords": json.loads(result[3]) if result[3] else []
-                }
-                
+            async with _analyzer_lock:
+                async with aiosqlite.connect(self.db_path) as conn:
+                    cursor = await conn.execute('''
+                        SELECT emotion, topic, confidence, keywords 
+                        FROM analysis_cache 
+                        WHERE text_hash = ? AND created_at > datetime('now', '-24 hours')
+                    ''', (text_hash,))
+                    
+                    result = await cursor.fetchone()
+                    
+                    if result:
+                        return {
+                            "emotion": result[0],
+                            "topic": result[1],
+                            "confidence": result[2],
+                            "keywords": json.loads(result[3]) if result[3] else []
+                        }
+                        
         except Exception as e:
             logging.error(f"Помилка отримання кешу: {e}")
             
         return None
 
-    def cache_analysis(self, text: str, analysis: Dict[str, Any]):
+    async def cache_analysis(self, text: str, analysis: Dict[str, Any]):
         """Зберігає результат аналізу в кеш"""
+        await self._ensure_db_initialized()
         text_hash = self.get_text_hash(text)
         
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO analysis_cache 
-                (text_hash, emotion, topic, confidence, keywords)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (
-                text_hash,
-                analysis.get("emotion", "нейтральний"),
-                analysis.get("topic", "загальне"),
-                analysis.get("confidence", 0.5),
-                json.dumps(analysis.get("keywords", []))
-            ))
-            
-            conn.commit()
-            conn.close()
+            async with _analyzer_lock:
+                async with aiosqlite.connect(self.db_path) as conn:
+                    await conn.execute('''
+                        INSERT OR REPLACE INTO analysis_cache 
+                        (text_hash, emotion, topic, confidence, keywords)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (
+                        text_hash,
+                        analysis.get("emotion", "нейтральний"),
+                        analysis.get("topic", "загальне"),
+                        analysis.get("confidence", 0.5),
+                        json.dumps(analysis.get("keywords", []))
+                    ))
+                    
+                    await conn.commit()
             
         except Exception as e:
             logging.error(f"Помилка збереження в кеш: {e}")
@@ -314,7 +323,7 @@ class LocalAnalyzer:
         
         # Перевіряємо кеш
         if use_cache:
-            cached = self.get_cached_analysis(text)
+            cached = await self.get_cached_analysis(text)
             if cached:
                 cached["analysis_method"] = "cached"
                 return cached
@@ -346,7 +355,7 @@ class LocalAnalyzer:
         
         # Зберігаємо в кеш
         if use_cache:
-            self.cache_analysis(text, analysis)
+            await self.cache_analysis(text, analysis)
         
         return analysis
 

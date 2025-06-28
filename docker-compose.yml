@@ -7,16 +7,39 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data          # Персистентні дані (база, медіа, backup)
+      - ./logs:/app/logs          # Логи
       - ./.env:/app/.env:ro       # Конфіг (read-only)
     environment:
       - BOT_DATA_DIR=/app/data
+      - USE_ASYNC_DB=true
+      - GEMINI_ENABLE_CACHE=true
       - PYTHONUNBUFFERED=1        # Для кращого логування
+    ports:
+      - "8080:8080"              # Порт для health checks та моніторингу
+    
+    # Ресурсні обмеження для стабільної роботи
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+      
+    # Логування з ротацією
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - gryag-network
 
