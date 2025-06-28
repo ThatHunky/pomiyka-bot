@@ -21,7 +21,7 @@ class RateLimiter:
         while timestamps and timestamps[0] < cutoff:
             timestamps.popleft()
     
-    def can_send_to_chat(self, chat_id: int, limit_per_minute: int = 3) -> bool:
+    def can_send_to_chat(self, chat_id: int, limit_per_minute: int = 6) -> bool:  # Збільшено з 3 до 6
         """Перевіряє чи можна відправити повідомлення в конкретний чат"""
         now = datetime.now()
         chat_timestamps = self.chat_messages[chat_id]
@@ -38,7 +38,7 @@ class RateLimiter:
         chat_timestamps.append(now)
         return True
     
-    def can_send_globally(self, global_limit_per_minute: int = 20) -> bool:
+    def can_send_globally(self, global_limit_per_minute: int = 30) -> bool:  # Збільшено з 20 до 30
         """Перевіряє глобальний ліміт повідомлень"""
         now = datetime.now()
         

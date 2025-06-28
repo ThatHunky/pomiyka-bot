@@ -26,16 +26,16 @@ if not GEMINI_API_KEY:
 GEMINI_API_VERSION = os.getenv("GEMINI_API_VERSION", "v1beta")
 BASE_API_URL = f"https://generativelanguage.googleapis.com/{GEMINI_API_VERSION}"
 
-# Налаштування з .env файлу
-GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.7"))
-GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "1024"))
-GEMINI_TOP_P = float(os.getenv("GEMINI_TOP_P", "0.95"))
+# Налаштування з .env файлу - ОПТИМІЗОВАНО для природнішого спілкування
+GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.2"))  # Ще більше знижено для більш стабільних відповідей
+GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "70"))  # Значно зменшено для коротких відповідей (2-3 речення)
+GEMINI_TOP_P = float(os.getenv("GEMINI_TOP_P", "0.8"))  # Знижено для більшої передбачуваності
 GEMINI_TOP_K = int(os.getenv("GEMINI_TOP_K", "40"))
 GEMINI_ENABLE_THINKING = os.getenv("GEMINI_ENABLE_THINKING", "false").lower() == "true"
 GEMINI_THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "2048"))
 GEMINI_ENABLE_SAFETY_OVERRIDE = os.getenv("GEMINI_ENABLE_SAFETY_OVERRIDE", "true").lower() == "true"
 GEMINI_ENABLE_STRUCTURED_OUTPUT = os.getenv("GEMINI_ENABLE_STRUCTURED_OUTPUT", "false").lower() == "true"
-GEMINI_RATE_LIMIT_RPM = int(os.getenv("GEMINI_RATE_LIMIT_RPM", "15"))  # requests per minute
+GEMINI_RATE_LIMIT_RPM = int(os.getenv("GEMINI_RATE_LIMIT_RPM", "45"))  # Збільшено з 30 до 45
 GEMINI_CACHE_ENABLED = os.getenv("GEMINI_CACHE_ENABLED", "true").lower() == "true"
 GEMINI_CACHE_TTL = int(os.getenv("GEMINI_CACHE_TTL", "300"))  # 5 minutes
 
@@ -289,7 +289,8 @@ class GeminiAPIClient:
             f"Ти — {PERSONA['name']}, приємний та дружелюбний чат-бот українською мовою. "
             "Ти розумний співрозмовник, який може підтримати будь-яку розмову. "
             "Твій стиль: природне спілкування з дуже легким гумором коли це доречно. "
-            "Говори зрозуміло, коротко та по суті як звичайна людина. "
+            "Говори зрозуміло, КОРОТКО та по суті як звичайна людина. "
+            "Твої відповіді мають бути ДУЖЕ КОРОТКИМИ (1-2 речення максимум). "
             "Не використовуй дивних слів чи незрозумілих фраз. "
             "Будь корисним та адекватним у відповідях."
         )
@@ -570,6 +571,9 @@ async def process_message(message: Message, tone_instruction: Optional[str] = No
         Відповідь від Gemini
     """
     try:
+        # Аналізуємо контекст відповіді (чи це відповідь на повідомлення бота)
+        reply_context = analyze_reply_context(message)
+        
         # Перевіряємо чи є обробленний контекст (з покращеної системи)
         if hasattr(message, 'processed_context') and message.processed_context:
             chat_context = message.processed_context
@@ -594,25 +598,30 @@ async def process_message(message: Message, tone_instruction: Optional[str] = No
         last_text = message.text if message.text else '[медіа]'
         user_name = getattr(message.from_user, 'full_name', 'Невідомий') if message.from_user else 'Невідомий'
         
-        # Формуємо системну інструкцію з персоналізацією
-        system_instruction = (
-            f"Ти - {PERSONA['name']}, дружелюбний чат-бот, який спілкується українською мовою. "
-            f"Ти відповідаєш на повідомлення від користувача '{user_name}'. "
-            "Будь природним, корисним та підтримуй приємну розмову. "
-            "Використовуй різноманітні слова та фрази, уникай повторів. "
-            "Звертайся до користувача по імені, якщо це доречно."
-        )
+        # Створюємо покращену системну інструкцію
+        system_instruction = build_enhanced_system_instruction(reply_context, recommendations)
         
         if tone_instruction:
             system_instruction += f" {tone_instruction}"
         
-        # Формуємо фінальний промпт
+        # Формуємо фінальний промпт з урахуванням діалогових ланцюгів
         dialogue_context = "\n".join(history)
-        prompt = (
-            f"Історія розмови:\n{dialogue_context}\n"
-            f"Поточне повідомлення від {user_name}: {last_text}\n"
-            "Дай коротку, природну відповідь українською мовою."
-        )
+        
+        # Спеціальний формат для відповідей на повідомлення бота
+        if reply_context.get('is_reply_to_bot'):
+            original_msg = reply_context.get('original_message', '')
+            prompt = (
+                f"Історія розмови:\n{dialogue_context}\n"
+                f"Твоє попереднє повідомлення: {original_msg}\n"
+                f"Відповідь від {user_name}: {last_text}\n"
+                "Продовж діалог природно, враховуючи що користувач відповідає на твоє повідомлення."
+            )
+        else:
+            prompt = (
+                f"Історія розмови:\n{dialogue_context}\n"
+                f"Поточне повідомлення від {user_name}: {last_text}\n"
+                "Дай коротку, природну відповідь українською мовою."
+            )
         
         # Компресія промпту якщо потрібно з урахуванням токенів
         max_tokens = PERSONA.get('max_context_tokens', 800000)
@@ -624,33 +633,36 @@ async def process_message(message: Message, tone_instruction: Optional[str] = No
             # Видаляємо найстарші повідомлення
             history.pop(0)
             dialogue_context = "\n".join(history)
-            prompt = (
-                f"Історія розмови:\n{dialogue_context}\n"
-                f"Поточне повідомлення від {user_name}: {last_text}\n"
-                "Дай коротку, природну відповідь українською мовою."
-            )
+            
+            if reply_context.get('is_reply_to_bot'):
+                original_msg = reply_context.get('original_message', '')
+                prompt = (
+                    f"Історія розмови:\n{dialogue_context}\n"
+                    f"Твоє попереднє повідомлення: {original_msg}\n"
+                    f"Відповідь від {user_name}: {last_text}\n"
+                    "Продовж діалог природно, враховуючи що користувач відповідає на твоє повідомлення."
+                )
+            else:
+                prompt = (
+                    f"Історія розмови:\n{dialogue_context}\n"
+                    f"Поточне повідомлення від {user_name}: {last_text}\n"
+                    "Дай коротку, природну відповідь українською мовою."
+                )
             current_tokens = token_counter.estimate_tokens(prompt)
         
-        logging.info(f"Фінальний промпт: ~{current_tokens} токенів з {len(history)} повідомлень")
+        logging.info(f"Фінальний промпт: ~{current_tokens} токенів з {len(history)} повідомлень. "
+                    f"Reply to bot: {reply_context.get('is_reply_to_bot', False)}")
         
         # Генеруємо відповідь
         client = await get_client()
         
-        # Створюємо кастомну конфігурацію якщо потрібно
-        custom_config = None
-        if recommendations:
-            custom_config = GenerationConfig(
-                temperature=GEMINI_TEMPERATURE,
-                max_output_tokens=min(recommendations.get('max_response_length', GEMINI_MAX_OUTPUT_TOKENS), GEMINI_MAX_OUTPUT_TOKENS),
-                top_p=GEMINI_TOP_P,
-                top_k=GEMINI_TOP_K,
-            )
-            
-            if GEMINI_ENABLE_THINKING and recommendations.get('complex_request', False):
-                custom_config.thinking_config = ThinkingConfig(
-                    include_thoughts=False,  # Не включаємо думки в чат
-                    thinking_budget=GEMINI_THINKING_BUDGET
-                )
+        # Створюємо динамічну конфігурацію
+        context_info = {
+            'is_reply_to_bot': reply_context.get('is_reply_to_bot', False),
+            'is_mention': recommendations.get('is_mention', False),
+            'is_random': recommendations.get('is_random', False)
+        }
+        custom_config = get_dynamic_generation_config(context_info, recommendations)
         
         result = await safe_api_call(
             client.generate_content,
@@ -740,3 +752,133 @@ async def cleanup():
 # Автоматичне очищення при імпорті
 import atexit
 atexit.register(lambda: asyncio.create_task(cleanup()) if asyncio.get_event_loop().is_running() else None)
+
+def get_dynamic_temperature(is_reply_to_bot: bool, is_mention: bool, is_random: bool) -> float:
+    """Динамічно визначає temperature для різних типів відповідей"""
+    base_temp = 0.2  # Базова температура знижена ще більше
+    
+    if is_reply_to_bot:
+        return 0.15  # Найнижча для точних відповідей на запитання
+    elif is_mention:
+        return 0.2   # Трохи більше креативності для згадок
+    elif is_random:
+        return 0.25  # Більше креативності для випадкових відповідей
+    else:
+        return base_temp
+
+def analyze_reply_context(message) -> Dict[str, Any]:
+    """Аналізує контекст відповіді на повідомлення бота"""
+    context = {
+        'is_reply_to_bot': False,
+        'original_message': None,
+        'reply_type': 'normal',
+        'conversation_depth': 0
+    }
+    
+    if hasattr(message, 'reply_to_message') and message.reply_to_message:
+        # Перевіряємо чи це відповідь на повідомлення бота
+        if hasattr(message.reply_to_message, 'from_user') and message.reply_to_message.from_user:
+            # Отримуємо ID бота з конфігурації
+            from bot.bot_config import PERSONA
+            bot_id = getattr(message.reply_to_message.from_user, 'id', None)
+            
+            # Перевіряємо чи це повідомлення від бота (треба перевірити через username або інші ознаки)
+            if message.reply_to_message.from_user.is_bot or \
+               (hasattr(message.reply_to_message.from_user, 'username') and 
+                message.reply_to_message.from_user.username and 
+                'gryag' in message.reply_to_message.from_user.username.lower()):
+                
+                context['is_reply_to_bot'] = True
+                context['original_message'] = message.reply_to_message.text or '[медіа]'
+                
+                # Визначаємо тип відповіді
+                if '?' in (message.text or ''):
+                    context['reply_type'] = 'question'
+                elif any(word in (message.text or '').lower() for word in ['дякую', 'спасибо', 'thanks']):
+                    context['reply_type'] = 'thanks' 
+                elif any(word in (message.text or '').lower() for word in ['ні', 'нет', 'не', 'неправильно']):
+                    context['reply_type'] = 'disagreement'
+                else:
+                    context['reply_type'] = 'continuation'
+    
+    return context
+
+def build_enhanced_system_instruction(context: Dict[str, Any], recommendations: Optional[Dict[str, Any]] = None) -> str:
+    """Будує покращену системну інструкцію з урахуванням контексту діалогу"""
+    from bot.bot_config import PERSONA
+    
+    base_instruction = (
+        f"Ти — {PERSONA['name']}, дружелюбний український чат-бот. "
+        "Твій стиль: природне спілкування як у звичайній людини, з легким гумором коли доречно. "
+        "Говори зрозуміло, коротко та по суті. Не використовуй дивних слів чи абсурдних фраз. "
+        "Будь корисним та адекватним у відповідях."
+    )
+    
+    # Додаємо контекст відповіді
+    if context.get('is_reply_to_bot'):
+        reply_type = context.get('reply_type', 'normal')
+        original_msg = context.get('original_message', '')
+        
+        if reply_type == 'question':
+            base_instruction += f"\n\nКОНТЕКСТ: Користувач ставить запитання у відповідь на твоє повідомлення: '{original_msg}'. Дай чітку та корисну відповідь."
+        elif reply_type == 'thanks':
+            base_instruction += f"\n\nКОНТЕКСТ: Користувач дякує за твоє повідомлення: '{original_msg}'. Відповідь має бути скромною та дружньою."
+        elif reply_type == 'disagreement':
+            base_instruction += f"\n\nКОНТЕКСТ: Користувач не погоджується з твоїм повідомленням: '{original_msg}'. Будь відкритим до дискусії."
+        else:
+            base_instruction += f"\n\nКОНТЕКСТ: Користувач продовжує розмову після твого повідомлення: '{original_msg}'. Підтримай діалог."
+    
+    # Додаємо рекомендації з аналізу поведінки
+    if recommendations:
+        conversation_type = recommendations.get('conversation_type', 'general')
+        mood = recommendations.get('mood', 'neutral') 
+        
+        if conversation_type == 'technical':
+            base_instruction += "\n\nТОН: Технічна розмова - будь точним та інформативним."
+        elif conversation_type == 'funny':
+            base_instruction += "\n\nТОН: Жартівлива розмова - додай легкий гумор."
+        elif conversation_type == 'emotional':
+            base_instruction += "\n\nТОН: Емоційна розмова - будь підтримуючим та розуміючим."
+        
+        # Обмеження довжини
+        max_length = recommendations.get('max_response_length', 200)
+        if max_length < 100:
+            base_instruction += "\n\nОБМЕЖЕННЯ: Твоя відповідь має бути ДУЖЕ короткою (1-2 речення)."
+        elif max_length < 200:
+            base_instruction += "\n\nОБМЕЖЕННЯ: Твоя відповідь має бути короткою та по суті."
+    
+    return base_instruction
+
+# Розширюємо функцію для роботи з динамічними параметрами
+def get_dynamic_generation_config(context: Dict[str, Any], recommendations: Optional[Dict[str, Any]] = None) -> GenerationConfig:
+    """Створює динамічну конфігурацію генерації на основі контексту"""
+    
+    # Визначаємо temperature
+    is_reply_to_bot = context.get('is_reply_to_bot', False)
+    is_mention = context.get('is_mention', False)
+    is_random = context.get('is_random', False)
+    
+    temperature = get_dynamic_temperature(is_reply_to_bot, is_mention, is_random)
+    
+    # Визначаємо максимальну довжину (тепер набагато менше)
+    max_tokens = GEMINI_MAX_OUTPUT_TOKENS  # Базове значення 70 токенів
+    if recommendations:
+        max_length = recommendations.get('max_response_length', 150)
+        # Конвертуємо символи в токени (приблизно 3-4 символи на токен для української)
+        estimated_tokens = max_length // 3
+        max_tokens = min(max_tokens, max(30, estimated_tokens))  # Мінімум 30 токенів
+    
+    # Для різних типів відповідей - різні ліміти
+    if is_reply_to_bot:
+        max_tokens = min(max_tokens, 100)  # Трохи більше для відповідей на питання
+    elif is_mention:
+        max_tokens = min(max_tokens, 80)   # Стандартно для згадок
+    elif is_random:
+        max_tokens = min(max_tokens, 60)   # Коротше для випадкових відповідей
+    
+    return GenerationConfig(
+        temperature=temperature,
+        max_output_tokens=max_tokens,
+        top_p=GEMINI_TOP_P,
+        top_k=GEMINI_TOP_K
+    )

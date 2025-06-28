@@ -14,6 +14,9 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from typing import Optional, Dict, Any
 import signal
 
+# Час запуску бота для ігнорування старих повідомлень
+BOT_START_TIME = datetime.now(timezone.utc)
+
 # Імпорт нових модулів покращень
 from bot.modules.config_validator import validate_startup_config, quick_validate
 from bot.modules.performance_monitor import (
@@ -61,24 +64,24 @@ def validate_config() -> None:
 validate_config()
 
 def is_message_too_old(message: Message) -> bool:
-    """Перевіряє чи повідомлення занадто старе для обробки"""
+    """Перевіряє чи повідомлення занадто старе для обробки (створене до запуску бота)"""
     if not PERSONA["ignore_old_messages"]:
         return False
     if not message.date:
         return False
     
-    now = datetime.now(timezone.utc)
-    message_time = message.date
-    
     # Конвертуємо message_time у UTC якщо потрібно
+    message_time = message.date
     if message_time.tzinfo is None:
         message_time = message_time.replace(tzinfo=timezone.utc)
     
-    age_minutes = (now - message_time).total_seconds() / 60
-    max_age = PERSONA["max_message_age_minutes"]
+    # Повідомлення старе, якщо воно було створене ДО запуску бота
+    # Додаємо невелику буферну зону (30 секунд) для часових розбіжностей
+    buffer_zone = timedelta(seconds=30)
+    cutoff_time = BOT_START_TIME - buffer_zone
     
-    if age_minutes > max_age:
-        logging.info(f"Ігноруємо старе повідомлення (вік: {age_minutes:.1f} хв, максимум: {max_age} хв)")
+    if message_time < cutoff_time:
+        logging.info(f"🕰️ Ігноруємо старе повідомлення: створено {message_time}, бот запущено {BOT_START_TIME}")
         return True
     
     return False
@@ -146,10 +149,16 @@ async def start_handler(message: Message) -> None:
 async def universal_handler(message: Message) -> None:
     """Універсальний хендлер для всіх повідомлень"""
     try:
-        # Перевіряємо чи повідомлення занадто старе
+        # Перевіряємо чи повідомлення занадто старе (було створене до запуску бота)
         if is_message_too_old(message):
-            logging.info(f"Повідомлення проігноровано через вік: {message.date}")
+            # Не логуємо кожне старе повідомлення, щоб не засмічувати логи
             return
+        
+        # Логуємо тільки нові повідомлення для дебагування
+        if message.text and len(message.text) > 10:
+            logging.info(f"🆕 Обробляємо повідомлення від {message.from_user.full_name if message.from_user else 'Невідомий'}: {message.text[:50]}...")
+        else:
+            logging.info(f"🆕 Обробляємо повідомлення від {message.from_user.full_name if message.from_user else 'Невідомий'}: {message.text or '[медіа]'}")
         
         # Перевірка None для from_user
         if not message.from_user or not getattr(message.from_user, 'id', None):
@@ -172,7 +181,15 @@ async def universal_handler(message: Message) -> None:
                     await safe_reply(message, f"❌ Помилка імпорту: {e}")
                 return
             elif message.text and message.text.startswith("/"):
-                await management.handle(message)
+                try:
+                    # management.handle НЕ є async функцією
+                    management.handle(message)
+                except Exception as e:
+                    logging.error(f"Помилка в management.handle: {e}")
+                    try:
+                        await safe_reply(message, "Помилка виконання команди")
+                    except Exception as reply_error:
+                        logging.error(f"Не вдалося відправити повідомлення про помилку: {reply_error}")
                 return
         
         # Групові чати
@@ -215,21 +232,41 @@ async def universal_handler(message: Message) -> None:
             # Можливо ставимо реакцію (перед іншими відповідями)
             reaction_posted = await reactions.maybe_react_to_message(message)
             
-            # СПРОЩЕНА ЛОГІКА З ПОКРАЩЕНИМ КОНТЕКСТОМ
+            # СПРОЩЕНА ЛОГІКА З ПОКРАЩЕНИМ КОНТЕКСТОМ ТА ОБРОБКОЮ ВІДПОВІДЕЙ НА БОТА
             if message.text:
                 # Отримуємо контекст чату з іменами користувачів
                 from bot.modules.context_sqlite import get_context
                 chat_context = await get_context(chat_id)
                 user_name = getattr(message.from_user, 'full_name', 'Невідомий')
                 
+                # СПЕЦІАЛЬНА ОБРОБКА: Перевірка чи це відповідь на повідомлення бота
+                is_reply_to_bot = False
+                if message.reply_to_message and message.reply_to_message.from_user:
+                    # Перевіряємо чи це повідомлення від бота
+                    if (message.reply_to_message.from_user.is_bot or 
+                        (hasattr(message.reply_to_message.from_user, 'username') and 
+                         message.reply_to_message.from_user.username and 
+                         'gryag' in message.reply_to_message.from_user.username.lower())):
+                        is_reply_to_bot = True
+                        logging.info(f"Виявлено відповідь на повідомлення бота від {user_name}")
+                
                 # Використовуємо покращену логіку з enhanced_behavior
                 analysis = enhanced_behavior.generate_enhanced_response(message, chat_context)
+                
+                # Для відповідей на бота підвищуємо шанс відповіді
+                if is_reply_to_bot:
+                    analysis['should_reply'] = random.random() < PERSONA['reply_to_bot_chance']
+                    analysis['is_reply_to_bot'] = True
+                    # Додаємо спеціальну реакцію на відповіді до бота
+                    if random.random() < PERSONA['reply_to_bot_reaction_chance']:
+                        await reactions.add_positive_reaction(message)
                 
                 # Логування для розуміння роботи системи
                 logging.info(f"Аналіз - Чат: {chat_id}, Користувач: {user_name}, "
                            f"Тип: {analysis.get('conversation_type', 'невідомий')}, "
                            f"Настрій: {analysis.get('mood', 'нейтральний')}, "
                            f"Рівень залученості: {analysis.get('engagement_level', 0)}, "
+                           f"Reply to bot: {is_reply_to_bot}, "
                            f"Відповідь: {analysis.get('should_reply', False)}")
                 
                 # Перевіряємо чи потрібно відповідати
@@ -242,9 +279,13 @@ async def universal_handler(message: Message) -> None:
                         text=message.text,
                         chat_id=chat_id,
                         user_name=user_name,
-                        processed_context=str(chat_context[-10:]),  # Останні 10 повідомлень
+                        processed_context=chat_context[-10:],  # Останні 10 повідомлень як список
                         recommendations=analysis
                     )
+                    
+                    # Додаємо інформацію про reply_to_message до enhanced_message
+                    if hasattr(message, 'reply_to_message'):
+                        enhanced_message.reply_to_message = message.reply_to_message
                     
                     # Генеруємо відповідь через Gemini
                     reply = await gemini.process_message(enhanced_message, tone_instruction)
@@ -382,6 +423,10 @@ async def shutdown(dispatcher: Dispatcher) -> None:
 
 async def main() -> None:
     """Головна точка входу"""
+    
+    print("🤖 Запускаю Гряг-бота...")
+    print(f"⏰ Час запуску: {BOT_START_TIME}")
+    print(f"🛡️ Ігнорування старих повідомлень: {PERSONA['ignore_old_messages']}")
     
     # Ініціалізація асинхронних баз даних при старті
     await database_initialization_task()

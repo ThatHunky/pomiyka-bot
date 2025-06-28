@@ -78,7 +78,7 @@ globs: *
 *   Each message in the context should have a "mood" tag (e.g. "joke", "fight", "meme", "silence"), potentially determined by Gemini, and a short summary of the "environment" in the chat should be included when forming the prompt for Gemini.
 *   Add a `/clear_context` command.
 *   Add a `/help` command.
-*   Add a `/rescan` command, to force a rescan of the chat. This should be used if the bot was initially added without access to messages.
+*   Add a `/rescan` command, to force a rescan of the chat. This should be used if the bot was initially added without access to messages. This should be used if the bot was initially added without access to messages.
 *   Add `random_reply_chance` and `max_context_size` parameters to `bot_config.py`.
 *   The bot should use a smart reply chance, a minimum silence period, and a maximum number of replies per hour to prevent spamming. These values should be configurable via environment variables: `BOT_SMART_REPLY_CHANCE`, `BOT_MIN_SILENCE_MINUTES`, `BOT_MAX_REPLIES_PER_HOUR`, `BOT_AUTONOMOUS_MODE`, and `BOT_SPONTANEOUS_CHANCE`.
 *   The bot should automatically initialize chats when added to a new one, marking it as ready for operation.
@@ -131,6 +131,7 @@ globs: *
 *   The bot's standard security settings should be lowered to the minimum level.
 *   Consider integrating a local language model for analyzing conversations, summarizing elements, and then passing relevant information to Gemini.
 *   A comprehensive codebase review should be conducted to identify potential areas for improvement or issues.
+*   **Gemini API Message Format:** The bot uses JSON format to send messages to the Gemini API. See details in [Gemini API Message Format](#gemini-api-message-format).
 
 ## DEBUGGING
 
@@ -322,3 +323,69 @@ Use **Gemini 2.5 Flash** - best balance of quality, speed, and cost for chat bot
     10. **Future Plan**
         *   Consider a web dashboard with statistics (REST API).
         *   Support multi-language (based on modular architecture).
+
+## GEMINI API MESSAGE FORMAT
+
+Messages to the Gemini API (e.g., for the Gemini 2.5 Flash model) are sent in JSON format via an HTTP POST request. The format depends on the specific library, but the basic structure is as follows:
+
+### 1. Endpoint
+```
+POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=YOUR_API_KEY
+```
+
+### 2. Headers
+```json
+Content-Type: application/json
+```
+
+### 3. Request Body
+The body contains an array of "contents", where each element is a message from the user or assistant. For example:
+
+````json
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        { "text": "Привіт, як справи?" }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "temperature": 0.7,
+    "topP": 0.95,
+    "maxOutputTokens": 1024
+  }
+}
+````
+
+#### Key Fields:
+- **contents** — array of messages (chat history). Each element:
+    - **role**: "user" or "model" (sometimes "assistant").
+    - **parts**: array of message parts (e.g., text, images, audio).
+        - For text: `{ "text": "..." }`
+        - For images: `{ "inlineData": { "mimeType": "...", "data": "..." } }`
+- **generationConfig** — additional generation parameters (optional).
+
+### 4. Example for a Multi-Message Chat:
+````json
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [{ "text": "Привіт, як тебе звати?" }]
+    },
+    {
+      "role": "model",
+      "parts": [{ "text": "Я — Гряг, твій бот-помічник!" }]
+    },
+    {
+      "role": "user",
+      "parts": [{ "text": "Розкажи анекдот." }]
+    }
+  ]
+}
+````
+
+### 5. API Response
+The API returns JSON with a `candidates` field, which contains the model's response.

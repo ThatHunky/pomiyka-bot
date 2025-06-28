@@ -21,7 +21,7 @@ def track_user_activity(chat_id: int, user_id: int):
     user_activity[chat_id][user_id] = [ts for ts in user_activity[chat_id][user_id] if ts > minute_ago]
 
 def is_spam_detected(chat_id: int, user_id: int = None) -> bool:
-    """Перевіряє чи виявлено спам у чаті"""
+    """Перевіряє чи виявлено спам у чаті - ЗМЕНШЕНО чутливість"""
     now = time.time()
     
     # Перевіряємо чи чат все ще в таймауті
@@ -31,9 +31,9 @@ def is_spam_detected(chat_id: int, user_id: int = None) -> bool:
     if user_id:
         # Перевіряємо активність конкретного користувача
         recent_messages = len(user_activity[chat_id][user_id])
-        if recent_messages >= PERSONA["spam_threshold"]:
-            # Встановлюємо таймаут для чату
-            spam_timeouts[chat_id] = now + PERSONA["spam_timeout"]
+        if recent_messages >= PERSONA["spam_threshold"]:  # Тепер 8 замість 6
+            # Встановлюємо м'якший таймаут
+            spam_timeouts[chat_id] = now + PERSONA["spam_timeout"]  # Тепер 120 секунд
             return True
     
     return False

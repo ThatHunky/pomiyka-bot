@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  gryag-bot-emergency:
+    build: .
+    container_name: gryag-bot-emergency-fix
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - BOT_IGNORE_OLD_MESSAGES=true
+      - BOT_MAX_MESSAGE_AGE_MINUTES=10
+      - GEMINI_MODEL=gemini-2.5-flash
+      - GEMINI_API_VERSION=v1
+    command: python -m bot.main_emergency
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'

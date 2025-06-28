@@ -225,3 +225,37 @@ async def get_active_chats() -> List[int]:
             chat_ids = [row[0] for row in rows]
     
     return chat_ids
+
+# Функція для перевірки відповідей на повідомлення бота
+async def is_reply_to_bot(message: Message, bot_id: int) -> bool:
+    """Перевіряє чи повідомлення є відповіддю на повідомлення бота"""
+    if not message.reply_to_message:
+        return False
+    
+    if not message.reply_to_message.from_user:
+        return False
+    
+    return message.reply_to_message.from_user.id == bot_id
+
+async def get_reply_context(chat_id: int, replied_message_id: int) -> Optional[Dict[str, Any]]:
+    """Отримує контекст повідомлення на яке відповідають"""
+    try:
+        await init_db()
+        
+        async with _db_lock:
+            async with aiosqlite.connect(DB_PATH) as conn:
+                cursor = await conn.execute(
+                    "SELECT user_name, text, timestamp FROM messages WHERE chat_id=? AND message_id=? LIMIT 1", 
+                    (chat_id, replied_message_id))
+                row = await cursor.fetchone()
+        
+        if row:
+            return {
+                "user_name": row[0],
+                "text": row[1], 
+                "timestamp": row[2]
+            }
+        return None
+    except Exception as e:
+        logging.error(f"Помилка отримання контексту відповіді: {e}")
+        return None
