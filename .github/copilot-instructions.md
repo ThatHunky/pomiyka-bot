@@ -22,6 +22,7 @@ globs: *
 *   The bot should ignore old messages received while offline to prevent spamming upon restart.
 *   The bot should intelligently react to complex contexts in group chats.
 *   The bot's level of absurdity should be adjustable to maintain a balance between humor and coherence.
+*   The bot should focus less on bizarre words and avoid generating nonsense.
 
 ## CODING STANDARDS
 
@@ -118,6 +119,7 @@ globs: *
     *   The bot should have a 70% chance of reacting on mentions, 30% on questions, and 5% on regular messages.
     *   The bot should use 30+ emojis including 👍❤️🔥🥰👏😁🤔🤯🙏👌🕊🤡🌚🌭⚡️🍌.
     *   The bot should use positive reactions on pleasant words, neutral/absurd reactions on regular messages, and thoughtful reactions on questions.
+*   The bot should implement smart message processing in `enhanced_behavior.py`, especially when spam is detected in the chat, to prevent spam and nonsense from the bot. This includes adjusting response strategies and context handling.
 
 ## DEBUGGING
 

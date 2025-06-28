@@ -15,8 +15,9 @@ def create_bot_archive():
     # Визначити кореневу директорію проєкту
     root_dir = Path(__file__).parent
     
-    # Ім'я архіву з актуальною датою
-    archive_name = f"gryag-bot-improved-v2.6-{datetime.now().strftime('%Y%m%d')}.zip"
+    # Ім'я архіву з актуальною датою та версією
+    version = "v2.7-gemini-enhanced"
+    archive_name = f"gryag-bot-{version}-{datetime.now().strftime('%Y%m%d')}.zip"
     archive_path = root_dir / archive_name
     
     # Файли та директорії для включення в архів
@@ -29,8 +30,17 @@ def create_bot_archive():
         "README.md",
         "CHANGELOG.md",
         
+        # Нова документація Gemini API
+        "GEMINI_ENHANCED_INTEGRATION.md",
+        "GEMINI_INTEGRATION_COMPLETION_REPORT.md", 
+        "API_VERSION_UPDATE_REPORT.md",
+        
         # Конфігурація (приклад)
         ".env.example",
+        
+        # Тести для нової інтеграції
+        "test_integration_gemini.py",
+        "test_api_version.py",
         
         # Весь модуль бота
         "bot/",
@@ -45,15 +55,21 @@ def create_bot_archive():
         "*.json",
         ".env",
         "data/",
-        "test_*",
         "*.zip",
         "*.tar.gz"
     ]
     
+    # Винятки з виключень (файли, які потрібно включити навіть якщо вони підпадають під фільтр)
+    include_exceptions = [
+        "test_integration_gemini.py",
+        "test_api_version.py",
+        ".env.example"
+    ]
+    
     def should_exclude(file_path: Path) -> bool:
         """Перевірити, чи потрібно виключити файл."""
-        # Завжди включати .env.example
-        if file_path.name == ".env.example":
+        # Завжди включати файли з винятків
+        if file_path.name in include_exceptions:
             return False
             
         file_str = str(file_path)

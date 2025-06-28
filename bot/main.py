@@ -39,12 +39,21 @@ def is_message_too_old(message: Message) -> bool:
         return False
     if not message.date:
         return False
+    
     now = datetime.now(timezone.utc)
     message_time = message.date
+    
+    # Конвертуємо message_time у UTC якщо потрібно
+    if message_time.tzinfo is None:
+        message_time = message_time.replace(tzinfo=timezone.utc)
+    
     age_minutes = (now - message_time).total_seconds() / 60
-    if age_minutes > PERSONA["max_message_age_minutes"]:
-        logging.info(f"Ігноруємо старе повідомлення (вік: {age_minutes:.1f} хв)")
+    max_age = PERSONA["max_message_age_minutes"]
+    
+    if age_minutes > max_age:
+        logging.info(f"Ігноруємо старе повідомлення (вік: {age_minutes:.1f} хв, максимум: {max_age} хв)")
         return True
+    
     return False
 
 async def safe_reply(message: Message, text: str, chat_id: Optional[int] = None) -> bool:
@@ -112,6 +121,7 @@ async def universal_handler(message: Message) -> None:
     try:
         # Перевіряємо чи повідомлення занадто старе
         if is_message_too_old(message):
+            logging.info(f"Повідомлення проігноровано через вік: {message.date}")
             return
         
         # Перевірка None для from_user
@@ -164,25 +174,60 @@ async def universal_handler(message: Message) -> None:
             # Можливо ставимо реакцію (перед іншими відповідями)
             reaction_posted = await reactions.maybe_react_to_message(message)
             
-            # НОВИЙ РОЗУМНИЙ АНАЛІЗ КОНТЕКСТУ
+            # ПОКРАЩЕНА РОЗУМНА ОБРОБКА КОНТЕКСТУ
             if message.text:
-                # Аналізуємо контекст повідомлення
-                recent_messages = [m.get('text', '') for m in context.get_context(chat_id)[-10:]]
-                analysis = enhanced_behavior.analyze_conversation_context(message.text, recent_messages)
+                # Отримуємо повний контекст чату
+                chat_context = context.get_context(chat_id)
+                recent_messages = chat_context[-20:]  # Останні 20 повідомлень для аналізу спаму
                 
-                # Оновлюємо історію аналізу
-                enhanced_behavior.update_chat_analysis(chat_id, analysis)
+                # Використовуємо покращену систему аналізу
+                analysis_result = enhanced_behavior.process_message_with_smart_context(
+                    message.text,
+                    chat_id,
+                    chat_context,
+                    recent_messages
+                )
                 
                 # Логування для розуміння роботи системи
-                logging.info(f"Аналіз повідомлення - Тип: {analysis['type']}, Настрій: {analysis['mood']}, Залученість: {analysis['engagement']}")
+                spam_level = analysis_result['spam_analysis']['spam_level']
+                context_quality = analysis_result['context_quality']['quality']
+                logging.info(f"Розумний аналіз - Чат: {chat_id}, Спам: {spam_level}, Контекст: {context_quality}, Відповідь: {analysis_result['should_respond']}")
+                
+                # Перевіряємо чи потрібно показати анти-спам повідомлення
+                if spam_level in ['medium', 'high'] and random.random() < 0.3:  # 30% шанс
+                    anti_spam_msg = enhanced_behavior.get_anti_spam_message(spam_level)
+                    if anti_spam_msg:
+                        await safe_reply(message, anti_spam_msg)
+                        smart_behavior.mark_bot_activity(chat_id)
+                        return
                 
                 # Якщо аналіз рекомендує відповісти
-                if analysis['should_respond']:
-                    # Отримуємо інструкцію тону
-                    tone_instruction = enhanced_behavior.get_tone_instruction(analysis)
+                if analysis_result['should_respond']:
+                    # Використовуємо готову інструкцію тону з урахуванням спаму та контексту
+                    tone_instruction = analysis_result['tone_instruction']
                     
-                    # Передаємо оригінальне повідомлення та інструкцію тону в Gemini
-                    reply = await gemini.process_message(message, tone_instruction)
+                    # Отримуємо рекомендації щодо відповіді
+                    recommendations = analysis_result['recommendations']
+                    
+                    # Передаємо стиснений контекст та інструкцію тону в Gemini
+                    processed_context = analysis_result['processed_context']
+                    
+                    # Створюємо фейкове повідомлення з обробленим контекстом для Gemini
+                    enhanced_message = FakeMessage(
+                        text=message.text,
+                        chat_id=chat_id,
+                        user_name=getattr(message.from_user, 'full_name', 'Користувач'),
+                        processed_context=processed_context,
+                        recommendations=recommendations
+                    )
+                    
+                    reply = await gemini.process_message(enhanced_message, tone_instruction)
+                    
+                    # Обрізаємо відповідь якщо потрібно (для спаму)
+                    max_length = recommendations.get('max_response_length', 200)
+                    if len(reply) > max_length:
+                        reply = reply[:max_length-3] + "..."
+                    
                     await safe_reply(message, reply)
                     smart_behavior.mark_bot_activity(chat_id)
                     return
