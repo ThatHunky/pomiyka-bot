@@ -1,6 +1,27 @@
+# === ОСНОВНІ ЗАЛЕЖНОСТІ ===
 aiogram>=3.4.1
 aiohttp>=3.9.1
 python-dotenv>=1.0.0
 google-generativeai>=0.3.2
 psutil>=5.9.0
 pytest>=7.0.0
+
+# === ЛОКАЛЬНИЙ АНАЛІЗ (опціональні залежності) ===
+sentence-transformers>=2.2.2
+numpy>=1.24.0
+scikit-learn>=1.3.0
+
+# === NLP ДЛЯ УКРАЇНСЬКОЇ МОВИ (опціональні) ===
+spacy>=3.7.0
+
+# === DEV ЗАЛЕЖНОСТІ (встановлюються окремо) ===
+# pip install -r requirements-dev.txt
+# black>=23.0.0
+# flake8>=6.0.0  
+# mypy>=1.5.0
+# isort>=5.12.0
+# pre-commit>=3.0.0
+# pytest-asyncio>=0.21.0
+# pytest-cov>=4.0.0
+# bandit>=1.7.5
+# safety>=2.3.0

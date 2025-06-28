@@ -1,11 +1,20 @@
 # Модуль для передбачення та аналізу ситуацій в чаті
 import re
 import random
+import asyncio
 from datetime import datetime, timedelta
 from collections import defaultdict
+from typing import List, Dict, Any
 from bot.bot_config import PERSONA
 
-# Патерни для розпізнавання типів розмов
+# Спроба імпорту локального аналізатора
+try:
+    from .local_analyzer import get_analyzer, get_conversation_context, analyze_text_local
+    LOCAL_ANALYZER_AVAILABLE = True
+except ImportError:
+    LOCAL_ANALYZER_AVAILABLE = False
+
+# Патерни для розпізнавання типів розмов (fallback для випадків без локального аналізатора)
 CONVERSATION_PATTERNS = {
     "технічна_дискусія": [
         r"(\w+)\s+(код|програма|алгоритм|функція|метод|клас|змінна)",
@@ -51,7 +60,206 @@ chat_moods = defaultdict(list)
 chat_topics = defaultdict(list)
 user_patterns = defaultdict(lambda: defaultdict(int))
 
-def analyze_message_context(message_text, chat_history):
+async def analyze_message_context_enhanced(message_text: str, chat_history: List[Dict[str, Any]], chat_id: int = 0) -> Dict[str, Any]:
+    """Покращений аналіз контексту повідомлення з використанням локального аналізатора"""
+    if not message_text:
+        return {"type": "unknown", "mood": "neutral", "prediction": "continue"}
+    
+    # Якщо доступний локальний аналізатор - використовуємо його
+    if LOCAL_ANALYZER_AVAILABLE:
+        try:
+            # Отримуємо локальний аналіз
+            local_analysis = await analyze_text_local(message_text)
+            
+            # Отримуємо контекст розмови
+            conversation_context = await get_conversation_context(chat_id, chat_history[-10:] if chat_history else [], hours=6)
+            
+            # Перетворюємо результати локального аналізу в формат, сумісний з існуючим кодом
+            return {
+                "type": _map_topic_to_conversation_type(local_analysis.get("topic", "загальне")),
+                "mood": _map_emotion_to_mood(local_analysis.get("emotion", "нейтральний")),
+                "prediction": _predict_from_local_analysis(local_analysis, conversation_context),
+                "engagement_level": _calculate_engagement_from_local(local_analysis, message_text),
+                "should_intervene": _should_intervene_from_local(local_analysis, conversation_context),
+                "suggested_tone": _get_tone_from_local(local_analysis),
+                "context_keywords": local_analysis.get("keywords", []),
+                "local_confidence": local_analysis.get("confidence", 0.5),
+                "conversation_summary": conversation_context.get("recommended_for_gemini", ""),
+                "analysis_method": "enhanced_local"
+            }
+        except Exception as e:
+            # Fallback на стандартний аналіз при помилці
+            return analyze_message_context_fallback(message_text, chat_history)
+    
+    # Fallback на стандартний аналіз
+    return analyze_message_context_fallback(message_text, chat_history)
+
+def _map_topic_to_conversation_type(topic: str) -> str:
+    """Мапінг тем з локального аналізатора на типи розмов"""
+    topic_mapping = {
+        "технології": "технічна_дискусія",
+        "робота_навчання": "технічна_дискусія", 
+        "повсякденне": "побутова_розмова",
+        "розваги": "жарти_мемі",
+        "погода_природа": "побутова_розмова",
+        "відносини": "емоційна_розмова"
+    }
+    return topic_mapping.get(topic, "загальна_розмова")
+
+def _map_emotion_to_mood(emotion: str) -> str:
+    """Мапінг емоцій з локального аналізатора на настрої"""
+    emotion_mapping = {
+        "радість": "позитивний",
+        "сум": "негативний", 
+        "злість": "негативний",
+        "страх": "негативний",
+        "здивування": "збуджений",
+        "відраза": "негативний",
+        "нейтральний": "нейтральний"
+    }
+    return emotion_mapping.get(emotion, "нейтральний")
+
+def _predict_from_local_analysis(local_analysis: Dict[str, Any], conversation_context: Dict[str, Any]) -> str:
+    """Передбачає розвиток розмови на основі локального аналізу"""
+    confidence = local_analysis.get("confidence", 0.5)
+    emotion = local_analysis.get("emotion", "нейтральний")
+    topic = local_analysis.get("topic", "загальне")
+    
+    # Високий рівень впевненості + емоційність = активна реакція
+    if confidence > 0.7 and emotion in ["радість", "злість", "здивування"]:
+        return "емоційна_реакція"
+    
+    # Технічні теми зазвичай розвиваються
+    if topic == "технології":
+        return "розвиток_теми"
+    
+    # Аналізуємо контекст розмови
+    current_conv = conversation_context.get("current_conversation", {})
+    if current_conv.get("message_count", 0) > 5:
+        return "активна_дискусія"
+    
+    return "продовження"
+
+def _calculate_engagement_from_local(local_analysis: Dict[str, Any], message_text: str) -> int:
+    """Розраховує рівень залученості на основі локального аналізу"""
+    base_level = 3
+    
+    # Додаємо впевненість аналізу
+    confidence = local_analysis.get("confidence", 0.5)
+    base_level += int(confidence * 4)
+    
+    # Емоційність
+    emotion = local_analysis.get("emotion", "нейтральний")
+    if emotion in ["радість", "здивування"]:
+        base_level += 2
+    elif emotion in ["сум", "злість"]:
+        base_level += 1
+    
+    # Тема
+    topic = local_analysis.get("topic", "загальне")
+    if topic in ["технології", "відносини"]:
+        base_level += 2
+    
+    # Згадки бота
+    text_lower = message_text.lower()
+    if any(trigger.strip() in text_lower for trigger in PERSONA["trigger_keywords"]):
+        base_level += 4
+    
+    return max(1, min(10, base_level))
+
+def _should_intervene_from_local(local_analysis: Dict[str, Any], conversation_context: Dict[str, Any]) -> bool:
+    """Визначає необхідність втручання на основі локального аналізу"""
+    confidence = local_analysis.get("confidence", 0.5)
+    emotion = local_analysis.get("emotion", "нейтральний")
+    topic = local_analysis.get("topic", "загальне")
+    
+    # Висока впевненість + цікава тема
+    if confidence > 0.8 and topic in ["технології", "відносини"]:
+        return True
+    
+    # Сильні емоції
+    if emotion in ["злість", "сум"] and confidence > 0.6:
+        return True
+    
+    # Аналізуємо контекст - довга тиша
+    historical = conversation_context.get("historical_context", {})
+    if historical.get("total_messages", 0) < 5:  # Мало повідомлень = тиша
+        return random.random() < 0.3
+    
+    return False
+
+def _get_tone_from_local(local_analysis: Dict[str, Any]) -> str:
+    """Визначає тон відповіді на основі локального аналізу"""
+    emotion = local_analysis.get("emotion", "нейтральний")
+    topic = local_analysis.get("topic", "загальне")
+    confidence = local_analysis.get("confidence", 0.5)
+    
+    if topic == "технології" and confidence > 0.7:
+        return "корисний_коментар"
+    elif emotion == "радість":
+        return "дружелюбна_підтримка" 
+    elif emotion in ["сум", "злість"]:
+        return "підтримка_та_розуміння"
+    elif topic == "розваги":
+        return "легкий_гумор"
+    else:
+        return "природне_спілкування"
+
+def analyze_message_context_fallback(message_text: str, chat_history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Стандартна функція аналізу контексту повідомлення (fallback)"""
+    if not message_text:
+        return {"type": "unknown", "mood": "neutral", "prediction": "continue"}
+    
+    text = message_text.lower()
+    
+    # Визначаємо тип розмови
+    conversation_type = detect_conversation_type(text)
+    
+    # Аналізуємо настрій
+    mood = analyze_emotional_tone(text)
+    
+    # Передбачаємо розвиток розмови
+    prediction = predict_conversation_flow(text, chat_history, conversation_type)
+    
+    # Визначаємо рівень залученості бота
+    bot_engagement = calculate_bot_engagement_level(text, conversation_type, mood)
+    
+    return {
+        "type": conversation_type,
+        "mood": mood,
+        "prediction": prediction,
+        "engagement_level": bot_engagement,
+        "should_intervene": should_bot_intervene(text, conversation_type, mood, chat_history),
+        "suggested_tone": get_suggested_response_tone(conversation_type, mood),
+        "context_keywords": extract_context_keywords(text),
+        "analysis_method": "regex_fallback"
+    }
+
+# Обгортка для зворотної сумісності
+def analyze_message_context(message_text: str, chat_history: List[Dict[str, Any]], chat_id: int = 0) -> Dict[str, Any]:
+    """Аналізує контекст повідомлення з можливістю використання локального аналізатора"""
+    # Використовуємо async версію якщо можливо
+    try:
+        import asyncio
+        if asyncio.iscoroutinefunction(analyze_message_context_enhanced):
+            # Якщо ми в async контексті, використовуємо enhanced версію
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Якщо цикл вже запущений, створюємо task
+                    task = asyncio.create_task(analyze_message_context_enhanced(message_text, chat_history, chat_id))
+                    # Для синхронного виклику повертаємо fallback
+                    return analyze_message_context_fallback(message_text, chat_history)
+                else:
+                    # Якщо циклу немає, запускаємо синхронно
+                    return asyncio.run(analyze_message_context_enhanced(message_text, chat_history, chat_id))
+            except:
+                pass
+    except:
+        pass
+    
+    # Fallback на стандартний аналіз
+    return analyze_message_context_fallback(message_text, chat_history)
     """Аналізує контекст повідомлення та передбачає подальший розвиток розмови"""
     if not message_text:
         return {"type": "unknown", "mood": "neutral", "prediction": "continue"}
@@ -227,19 +435,19 @@ def should_bot_intervene(text: str, conv_type: str, mood: str, chat_history: Lis
 def get_suggested_response_tone(conv_type: str, mood: str) -> str:
     """Пропонує тон для відповіді бота"""
     tone_mapping = {
-        ("технічна_дискусія", "задумливий"): "розумний_абсурд",
-        ("технічна_дискусія", "позитивний"): "підтримуючий_жарт",
-        ("філософська_розмова", "задумливий"): "глибокий_абсурд",
-        ("філософська_розмова", "позитивний"): "мудрий_гумор",
-        ("жарти_мемі", "позитивний"): "веселий_абсурд",
-        ("жарти_мемі", "збуджений"): "енергійний_гумор",
-        ("емоційна_розмова", "негативний"): "підтримуючий_абсурд",
-        ("емоційна_розмова", "позитивний"): "радісний_гумор",
-        ("конфлікт", "негативний"): "розряджаючий_абсурд",
-        ("побутова_розмова", "нейтральний"): "легкий_гумор"
+        ("технічна_дискусія", "задумливий"): "корисний_коментар",
+        ("технічна_дискусія", "позитивний"): "дружелюбна_підтримка",
+        ("філософська_розмова", "задумливий"): "мудра_думка",
+        ("філософська_розмова", "позитивний"): "цікаві_роздуми",
+        ("жарти_мемі", "позитивний"): "легкий_гумор",
+        ("жарти_мемі", "збуджений"): "веселий_настрій",
+        ("емоційна_розмова", "негативний"): "підтримка_та_розуміння",
+        ("емоційна_розмова", "позитивний"): "щира_радість",
+        ("конфлікт", "негативний"): "дипломатичне_заспокоєння",
+        ("побутова_розмова", "нейтральний"): "дружелюбна_розмова"
     }
     
-    return tone_mapping.get((conv_type, mood), "стандартний_абсурд")
+    return tone_mapping.get((conv_type, mood), "природне_спілкування")
 
 def extract_context_keywords(text: str) -> List[str]:
     """Витягує ключові слова з контексту для кращого розуміння"""
@@ -315,7 +523,7 @@ def get_chat_mood_trend(chat_id: int, hours: int = 24) -> Dict:
 
 def generate_context_aware_prompt(message_text: str, chat_analysis: Dict, chat_trend: Dict) -> str:
     """Генерує промт для Gemini з урахуванням контексту та аналізу"""
-    base_prompt = f"Ти — Гряг, дружелюбний чат-бот з легким гумором."
+    base_prompt = f"Ти — Гряг, звичайний дружелюбний чат-бот з дуже легким гумором."
     
     # Додаємо контекст поточної розмови
     context_info = f"""
@@ -336,17 +544,120 @@ def generate_context_aware_prompt(message_text: str, chat_analysis: Dict, chat_t
     
     # Налаштовуємо стиль відповіді
     tone_instructions = {
-        "розумний_жарт": "Відповідай розумно, з легким гумором та корисними порадами.",
-        "підтримуючий_жарт": "Підтримай розмову легким гумором та дотепними коментарями.",
-        "дружелюбний_жарт": "Будь дружелюбним, веселим та підтримуючим.",
-        "веселий_жарт": "Будь веселим та дотепним, підтримай позитивний настрій.",
-        "підтримуючий": "Підтримай та розвесели ситуацію легким гумором.",
-        "розряджаючий": "Розрядь напругу дружелюбним коментарем або легким гумором."
+        "розумний_жарт": "Відповідай розумно та по справі, коли доречно — додай легкий жарт.",
+        "підтримуючий_жарт": "Підтримай розмову дружелюбним коментарем.",
+        "дружелюбний_жарт": "Будь дружелюбним і приємним у спілкуванні.",
+        "веселий_жарт": "Будь дружелюбним та підтримай розмову.",
+        "підтримуючий": "Підтримай і допоможи в ситуації.",
+        "розряджаючий": "Спробуй розрядити ситуацію спокійним коментарем."
     }
     
     tone_instruction = tone_instructions.get(
-        chat_analysis.get('suggested_tone', 'дружелюбний'),
-        "Відповідай у своєму дружелюбному стилі з легким гумором."
+        chat_analysis.get('suggested_tone', 'дружелюбний_жарт'),
+        "Відповідай у дружелюбному стилі."
     )
     
     return f"{base_prompt}\n{context_info}\n\nІнструкція: {tone_instruction}\n\nВідповідай коротко (1-2 речення), дотепно та по-українськи."
+
+# Покращені функції з використанням локального аналізатора
+
+async def generate_enhanced_context_prompt(message_text: str, chat_id: int, chat_history: List[Dict[str, Any]]) -> str:
+    """Генерує покращений промт з використанням локального аналізатора"""
+    if LOCAL_ANALYZER_AVAILABLE:
+        try:
+            # Отримуємо повний аналіз з локального аналізатора
+            context_data = await get_conversation_context(chat_id, chat_history[-15:] if chat_history else [], hours=12)
+            
+            base_prompt = "Ти — Гряг, дружелюбний український чат-бот з легким гумором."
+            
+            # Використовуємо готовий контекст від локального аналізатора
+            gemini_context = context_data.get("recommended_for_gemini", "")
+            
+            if gemini_context:
+                context_info = f"\nКонтекст розмови: {gemini_context}"
+            else:
+                context_info = "\nСтандартна розмова в чаті."
+            
+            # Визначаємо стиль відповіді
+            current_analysis = context_data.get("current_conversation", {})
+            dominant_emotion = current_analysis.get("dominant_emotion", "нейтральний")
+            main_topics = current_analysis.get("main_topics", [])
+            
+            style_instruction = _get_style_instruction(dominant_emotion, main_topics, message_text)
+            
+            return f"{base_prompt}{context_info}\n\n{style_instruction}\n\nВідповідай коротко та природно українською мовою."
+            
+        except Exception as e:
+            # Fallback на стандартний генератор
+            analysis = analyze_message_context_fallback(message_text, chat_history)
+            return generate_context_aware_prompt(message_text, analysis, {})
+    
+    # Fallback для випадку без локального аналізатора
+    analysis = analyze_message_context_fallback(message_text, chat_history)
+    return generate_context_aware_prompt(message_text, analysis, {})
+
+def _get_style_instruction(emotion: str, topics: List[str], message_text: str) -> str:
+    """Визначає стиль інструкції на основі емоції та тем"""
+    text_lower = message_text.lower()
+    
+    # Перевіряємо згадки бота
+    bot_mentioned = any(trigger.strip() in text_lower for trigger in PERSONA.get("trigger_keywords", []))
+    
+    if bot_mentioned:
+        return "Ти згаданий в повідомленні - відповідай активно та дружелюбно."
+    
+    # На основі емоцій
+    if emotion == "радість":
+        return "Підтримай веселий настрій дружелюбним коментарем."
+    elif emotion in ["сум", "злість"]:
+        return "Будь тактовним та підтримуючим."
+    elif emotion == "збуджений":
+        return "Підтримай енергійний настрій розмови."
+    
+    # На основі тем
+    if topics and len(topics) > 0:
+        main_topic = topics[0]
+        if main_topic == "технології":
+            return "Це технічна тема - можеш бути корисним та розумним."
+        elif main_topic == "розваги":
+            return "Розважальна тема - можна жартувати та бути веселим."
+        elif main_topic == "побутова_розмова":
+            return "Побутова розмова - будь природним та дружелюбним."
+    
+    return "Відповідай природно та дружелюбно."
+
+# Функція для перевірки доступності локального аналізатора
+def is_local_analyzer_available() -> bool:
+    """Перевіряє доступність локального аналізатора"""
+    return LOCAL_ANALYZER_AVAILABLE
+
+# Функція для отримання статистики локального аналізатора
+async def get_local_analyzer_stats() -> Dict[str, Any]:
+    """Отримує статистику роботи локального аналізатора"""
+    if not LOCAL_ANALYZER_AVAILABLE:
+        return {"status": "unavailable"}
+    
+    try:
+        analyzer = get_analyzer()
+        # Тут можна додати більше статистики від аналізатора
+        return {
+            "status": "available",
+            "model_loaded": analyzer.model is not None,
+            "nlp_loaded": analyzer.nlp is not None,
+            "cache_size": len(analyzer.analysis_cache),
+            "batch_size": analyzer.batch_size
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+# Функція очищення для періодичного використання
+async def cleanup_local_analyzer(days: int = 7):
+    """Очищує дані локального аналізатора"""
+    if LOCAL_ANALYZER_AVAILABLE:
+        try:
+            analyzer = get_analyzer()
+            analyzer.cleanup_old_data(days)
+            return True
+        except Exception as e:
+            return False
+    return False

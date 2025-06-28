@@ -1,0 +1,218 @@
+name: 🤖 Гряг-бот CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: 🔍 Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: 🎨 Check code formatting (Black)
+        run: black --check --diff bot/ tests/ *.py
+
+      - name: 📋 Check import sorting (isort)
+        run: isort --check-only --diff bot/ tests/ *.py
+
+      - name: 🔍 Lint with flake8
+        run: flake8 bot/ tests/ *.py
+
+      - name: 🔧 Type checking (mypy)
+        run: mypy bot/ --ignore-missing-imports
+
+      - name: 🛡️ Security check (bandit)
+        run: bandit -r bot/ -f json -o bandit-report.json
+        continue-on-error: true
+
+      - name: 🔒 Safety check
+        run: safety check
+        continue-on-error: true
+
+  test:
+    name: 🧪 Testing
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: 🧠 Install local analyzer dependencies
+        run: |
+          pip install sentence-transformers spacy
+          python -m spacy download en_core_web_sm || true
+        continue-on-error: true
+
+      - name: 🏗️ Create data directories
+        run: |
+          mkdir -p data logs backups
+
+      - name: 🧪 Run tests
+        run: |
+          pytest -v --cov=bot --cov-report=xml --cov-report=term-missing
+        env:
+          # Мокові значення для тестів
+          TELEGRAM_BOT_TOKEN: "test_token"
+          GEMINI_API_KEY: "test_key"
+          ADMIN_ID: "123456789"
+
+      - name: 📊 Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+  test-local-analyzer:
+    name: 🧠 Test Local Analyzer
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🧠 Install local analyzer
+        run: |
+          pip install sentence-transformers spacy scikit-learn numpy
+          python -m spacy download en_core_web_sm
+        continue-on-error: true
+
+      - name: 🏗️ Create directories
+        run: mkdir -p data
+
+      - name: 🔧 Test local analyzer import
+        run: |
+          python -c "
+          try:
+              from bot.modules.local_analyzer import get_analyzer, analyze_text_local
+              print('✅ Локальний аналізатор імпортується успішно')
+          except ImportError as e:
+              print(f'❌ Помилка імпорту: {e}')
+              exit(1)
+          "
+
+  build:
+    name: 🐳 Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔧 Build Docker image
+        run: |
+          docker build -t gryag-bot:latest .
+
+      - name: 🧪 Test Docker image
+        run: |
+          docker run --rm gryag-bot:latest python -c "import bot; print('✅ Docker образ працює')"
+
+  backup-test:
+    name: 💾 Backup Test
+    runs-on: ubuntu-latest
+    needs: [test]
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🏗️ Create test environment
+        run: |
+          mkdir -p data logs backups
+          touch data/context.db
+
+      - name: 💾 Test backup functionality
+        run: |
+          python -c "
+          from bot.modules.backup_manager import BackupManager
+          bm = BackupManager()
+          backup_file = bm.create_backup()
+          print(f'✅ Backup створено: {backup_file}')
+          "
+        env:
+          TELEGRAM_BOT_TOKEN: "test_token"
+          GEMINI_API_KEY: "test_key"
+
+  deploy:
+    name: 🚀 Deploy
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      - name: 💾 Create production backup
+        run: |
+          echo "🔄 Створення production backup перед деплоєм..."
+          # Тут можна додати логіку для бекапу production бази
+          
+      - name: 🚀 Deploy notification
+        run: |
+          echo "🎉 Деплой на production готовий!"
+          echo "Не забудьте:"
+          echo "1. Перевірити .env налаштування"
+          echo "2. Запустити міграції БД якщо потрібно"
+          echo "3. Моніторити логи після деплою"

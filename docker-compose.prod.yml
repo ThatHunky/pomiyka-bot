@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  gryag-bot:
+    build: .
+    container_name: gryag-bot-prod
+    restart: unless-stopped
+    volumes:
+      - gryag-data:/app/data      # Named volume для продакшн
+      - ./.env:/app/.env:ro       # Конфіг (read-only)
+    environment:
+      - BOT_DATA_DIR=/app/data
+      - PYTHONUNBUFFERED=1
+      - ENV=production
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/app/data/context.db') else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - gryag-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+
+networks:
+  gryag-network:
+    driver: bridge
+
+volumes:
+  gryag-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data

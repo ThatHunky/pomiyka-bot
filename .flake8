@@ -1,0 +1,26 @@
+[flake8]
+max-line-length = 120
+extend-ignore = 
+    # E203: whitespace before ':'  (conflicts with black)
+    E203,
+    # W503: line break before binary operator (conflicts with black)
+    W503,
+    # E501: line too long (handled by black)
+    E501
+exclude = 
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    .mypy_cache,
+    .pytest_cache,
+    *.egg-info,
+    build,
+    dist
+per-file-ignores =
+    # Tests can use asserts and unused imports
+    test_*.py: S101,F401,F811
+    # __init__.py files can have unused imports  
+    __init__.py: F401
+max-complexity = 12
+docstring-convention = google

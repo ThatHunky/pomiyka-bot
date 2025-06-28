@@ -16,7 +16,7 @@ def create_bot_archive():
     root_dir = Path(__file__).parent
     
     # Ім'я архіву з актуальною датою та версією
-    version = "v2.7-gemini-enhanced"
+    version = "v2.8-docker-optimized"
     archive_name = f"gryag-bot-{version}-{datetime.now().strftime('%Y%m%d')}.zip"
     archive_path = root_dir / archive_name
     
@@ -27,20 +27,29 @@ def create_bot_archive():
         "start.py",
         "Dockerfile", 
         "docker-compose.yml",
+        "docker-compose.prod.yml",
+        ".dockerignore",
         "README.md",
         "CHANGELOG.md",
         
-        # Нова документація Gemini API
+        # Документація
         "GEMINI_ENHANCED_INTEGRATION.md",
         "GEMINI_INTEGRATION_COMPLETION_REPORT.md", 
         "API_VERSION_UPDATE_REPORT.md",
+        "PROJECT_ANALYSIS.md",
+        "AGENTS.md",
+        "DEPLOYMENT.md",
         
         # Конфігурація (приклад)
-        ".env.example",
+        ".env.sample",
         
-        # Тести для нової інтеграції
+        # Тести (критичні)
         "test_integration_gemini.py",
         "test_api_version.py",
+        "test_enhanced_behavior_unit.py",
+        "test_health_checker_unit.py",
+        "test_backup_manager.py",
+        "test_rate_limiter_unit.py",
         
         # Весь модуль бота
         "bot/",
@@ -63,6 +72,7 @@ def create_bot_archive():
     include_exceptions = [
         "test_integration_gemini.py",
         "test_api_version.py",
+        ".env.sample",
         ".env.example"
     ]
     

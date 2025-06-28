@@ -1,0 +1,72 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Env files
+.env.local
+.env.development
+.env.testing
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Data (will be mounted as volume)
+data/
+*.db
+*.db-journal
+
+# Tests
+test_*.py
+tests/
+
+# Documentation
+*.md
+AGENTS.md
+PROJECT_ANALYSIS.md
+CHANGELOG.md
+COMPLETION_REPORT.md
+
+# Archives and releases
+*.zip
+*.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Backup files
+backup_*.db

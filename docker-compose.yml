@@ -6,10 +6,17 @@ services:
     container_name: gryag-bot
     restart: unless-stopped
     volumes:
-      - ./data:/app/data          # Персистентні дані (база, медіа)
+      - ./data:/app/data          # Персистентні дані (база, медіа, backup)
       - ./.env:/app/.env:ro       # Конфіг (read-only)
     environment:
       - BOT_DATA_DIR=/app/data
+      - PYTHONUNBUFFERED=1        # Для кращого логування
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - gryag-network
 

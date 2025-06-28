@@ -32,7 +32,7 @@ GEMINI_TOP_P = float(os.getenv("GEMINI_TOP_P", "0.95"))
 GEMINI_TOP_K = int(os.getenv("GEMINI_TOP_K", "40"))
 GEMINI_ENABLE_THINKING = os.getenv("GEMINI_ENABLE_THINKING", "false").lower() == "true"
 GEMINI_THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "2048"))
-GEMINI_ENABLE_SAFETY_OVERRIDE = os.getenv("GEMINI_ENABLE_SAFETY_OVERRIDE", "false").lower() == "true"
+GEMINI_ENABLE_SAFETY_OVERRIDE = os.getenv("GEMINI_ENABLE_SAFETY_OVERRIDE", "true").lower() == "true"
 GEMINI_ENABLE_STRUCTURED_OUTPUT = os.getenv("GEMINI_ENABLE_STRUCTURED_OUTPUT", "false").lower() == "true"
 GEMINI_RATE_LIMIT_RPM = int(os.getenv("GEMINI_RATE_LIMIT_RPM", "15"))  # requests per minute
 GEMINI_CACHE_ENABLED = os.getenv("GEMINI_CACHE_ENABLED", "true").lower() == "true"
@@ -253,24 +253,14 @@ class GeminiAPIClient:
 
     def _get_default_safety_settings(self) -> List[SafetySetting]:
         """Повертає дефолтні налаштування безпеки."""
-        if GEMINI_ENABLE_SAFETY_OVERRIDE:
-            # Більш дозволяючі налаштування для чат-бота
-            return [
-                SafetySetting(HarmCategory.HARASSMENT, HarmBlockThreshold.BLOCK_ONLY_HIGH),
-                SafetySetting(HarmCategory.HATE_SPEECH, HarmBlockThreshold.BLOCK_ONLY_HIGH),
-                SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
-                SafetySetting(HarmCategory.DANGEROUS_CONTENT, HarmBlockThreshold.BLOCK_ONLY_HIGH),
-                SafetySetting(HarmCategory.CIVIC_INTEGRITY, HarmBlockThreshold.BLOCK_NONE),
-            ]
-        else:
-            # Дефолтні (більш строгі) налаштування
-            return [
-                SafetySetting(HarmCategory.HARASSMENT, HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
-                SafetySetting(HarmCategory.HATE_SPEECH, HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
-                SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
-                SafetySetting(HarmCategory.DANGEROUS_CONTENT, HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
-                SafetySetting(HarmCategory.CIVIC_INTEGRITY, HarmBlockThreshold.BLOCK_NONE),
-            ]
+        # Мінімальні налаштування безпеки для більш вільного спілкування
+        return [
+            SafetySetting(HarmCategory.HARASSMENT, HarmBlockThreshold.BLOCK_NONE),
+            SafetySetting(HarmCategory.HATE_SPEECH, HarmBlockThreshold.BLOCK_NONE),
+            SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, HarmBlockThreshold.BLOCK_ONLY_HIGH),
+            SafetySetting(HarmCategory.DANGEROUS_CONTENT, HarmBlockThreshold.BLOCK_NONE),
+            SafetySetting(HarmCategory.CIVIC_INTEGRITY, HarmBlockThreshold.BLOCK_NONE),
+        ]
 
     def _get_default_generation_config(self) -> GenerationConfig:
         """Повертає дефолтну конфігурацію генерації."""
@@ -295,13 +285,12 @@ class GeminiAPIClient:
         from bot.bot_config import PERSONA
         
         base_instruction = (
-            f"Ти — {PERSONA['name']}, дружелюбний українською мовою чат-бот з легким гумором. "
-            "Ти розумний, корисний та завжди готовий допомогти чи підтримати розмову. "
-            "Твій стиль — це легкий гумор, дружелюбність та корисні поради. "
-            "Ти адекватний, розумний та приємний у спілкуванні. "
-            "ВАЖЛИВО: Використовуй нормальні, зрозумілі слова. Не говори дивних або незрозумілих речей. "
-            "Будь конкретним та по суті. Не використовуй занадто абсурдні вирази. "
-            "Відповідай коротко, зрозуміло та по суті українською мовою."
+            f"Ти — {PERSONA['name']}, приємний та дружелюбний чат-бот українською мовою. "
+            "Ти розумний співрозмовник, який може підтримати будь-яку розмову. "
+            "Твій стиль: природне спілкування з дуже легким гумором коли це доречно. "
+            "Говори зрозуміло, коротко та по суті як звичайна людина. "
+            "Не використовуй дивних слів чи незрозумілих фраз. "
+            "Будь корисним та адекватним у відповідях."
         )
         
         # Додаємо контекстні інструкції
@@ -312,7 +301,7 @@ class GeminiAPIClient:
         elif context_type == "clarification":
             base_instruction += "\n\nРЕЖИМ: З'ясування. М'якко спитай що саме потрібно або направ розмову."
         elif context_type == "humor":
-            base_instruction += "\n\nРЕЖИМ: Легкий гумор. Додай легкий жарт або веселий коментар, але не перебільшуй."
+            base_instruction += "\n\nРЕЖИМ: Легкий гумор. Додай невимушений жарт або дотепний коментар."
         
         # Додаємо рекомендації з smart behavior
         if recommendations:
@@ -325,7 +314,7 @@ class GeminiAPIClient:
                 base_instruction += f"\n\nОБМЕЖЕННЯ: Твоя відповідь повинна бути короткою (до {max_length} символів)."
             
             if recommendations.get('should_ask_clarification'):
-                base_instruction += "\n\nЗАВДАННЯ: Розмова розбита - спробуй м'якко з'ясувати що саме потрібно."
+                base_instruction += "\n\nЗАВДАННЯ: Розмова незрозуміла - м'якко з'ясуй що саме потрібно."
             
             if recommendations.get('should_provide_guidance'):
                 base_instruction += "\n\nЗАВДАННЯ: Дай корисну пораду або направ розмову в конструктивне русло."
@@ -593,21 +582,47 @@ async def process_message(message: Message, tone_instruction: Optional[str] = No
         last_msgs = [m.get('text', '') for m in chat_context[-5:] if m.get('text')]
         context_type = _analyze_context_type(last_msgs, recommendations)
         
-        # Формуємо історію діалогу
-        history = [f"{m['user']}: {m['text']}" for m in chat_context[-PERSONA['context_limit']:] if m.get('text')]
+        # Формуємо історію діалогу з іменами користувачів
+        history = []
+        for m in chat_context[-PERSONA['context_limit']:]:
+            if m.get('text'):
+                user_display = m.get('user_name', m.get('user', 'Невідомий'))
+                history.append(f"{user_display}: {m['text']}")
         
         # Додаємо поточне повідомлення
         last_text = message.text if message.text else '[медіа]'
         user_name = getattr(message.from_user, 'full_name', 'Невідомий') if message.from_user else 'Невідомий'
         
+        # Формуємо системну інструкцію з персоналізацією
+        system_instruction = (
+            f"Ти - {PERSONA['name']}, дружелюбний чат-бот, який спілкується українською мовою. "
+            f"Ти відповідаєш на повідомлення від користувача '{user_name}'. "
+            "Будь природним, корисним та підтримуй приємну розмову. "
+            "Використовуй різноманітні слова та фрази, уникай повторів. "
+            "Звертайся до користувача по імені, якщо це доречно."
+        )
+        
+        if tone_instruction:
+            system_instruction += f" {tone_instruction}"
+        
         # Формуємо фінальний промпт
-        prompt = "\n".join(history) + f"\n{user_name}: {last_text}\n{PERSONA['name']}:"
+        dialogue_context = "\n".join(history)
+        prompt = (
+            f"Історія розмови:\n{dialogue_context}\n"
+            f"Поточне повідомлення від {user_name}: {last_text}\n"
+            "Дай коротку, природну відповідь українською мовою."
+        )
         
         # Компресія промпту якщо потрібно
         max_size = recommendations.get('max_context_size', PERSONA['max_context_size'])
         while len(prompt) > max_size and history:
             history.pop(0)
-            prompt = "\n".join(history) + f"\n{user_name}: {last_text}\n{PERSONA['name']}:"
+            dialogue_context = "\n".join(history)
+            prompt = (
+                f"Історія розмови:\n{dialogue_context}\n"
+                f"Поточне повідомлення від {user_name}: {last_text}\n"
+                "Дай коротку, природну відповідь українською мовою."
+            )
         
         # Генеруємо відповідь
         client = await get_client()
@@ -633,7 +648,8 @@ async def process_message(message: Message, tone_instruction: Optional[str] = No
             prompt,
             context_type=context_type,
             custom_config=custom_config,
-            recommendations=recommendations
+            recommendations=recommendations,
+            system_instruction=system_instruction
         )
         
         return result

@@ -11,12 +11,14 @@ from dotenv import load_dotenv
 import random
 from datetime import datetime, timezone, timedelta
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from bot.modules.utils import FakeMessage
-from typing import Optional
+from typing import Optional, Dict, Any
 import signal
 
 load_dotenv()
 API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+if not API_TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN не знайдено в змінних середовища")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -174,57 +176,41 @@ async def universal_handler(message: Message) -> None:
             # Можливо ставимо реакцію (перед іншими відповідями)
             reaction_posted = await reactions.maybe_react_to_message(message)
             
-            # ПОКРАЩЕНА РОЗУМНА ОБРОБКА КОНТЕКСТУ
+            # СПРОЩЕНА ЛОГІКА З ПОКРАЩЕНИМ КОНТЕКСТОМ
             if message.text:
-                # Отримуємо повний контекст чату
+                # Отримуємо контекст чату з іменами користувачів
                 chat_context = context.get_context(chat_id)
-                recent_messages = chat_context[-20:]  # Останні 20 повідомлень для аналізу спаму
+                user_name = getattr(message.from_user, 'full_name', 'Невідомий')
                 
-                # Використовуємо покращену систему аналізу
-                analysis_result = enhanced_behavior.process_message_with_smart_context(
-                    message.text,
-                    chat_id,
-                    chat_context,
-                    recent_messages
-                )
+                # Використовуємо покращену логіку з enhanced_behavior
+                analysis = enhanced_behavior.generate_enhanced_response(message, chat_context)
                 
                 # Логування для розуміння роботи системи
-                spam_level = analysis_result['spam_analysis']['spam_level']
-                context_quality = analysis_result['context_quality']['quality']
-                logging.info(f"Розумний аналіз - Чат: {chat_id}, Спам: {spam_level}, Контекст: {context_quality}, Відповідь: {analysis_result['should_respond']}")
+                logging.info(f"Аналіз - Чат: {chat_id}, Користувач: {user_name}, "
+                           f"Тип: {analysis.get('conversation_type', 'невідомий')}, "
+                           f"Настрій: {analysis.get('mood', 'нейтральний')}, "
+                           f"Рівень залученості: {analysis.get('engagement_level', 0)}, "
+                           f"Відповідь: {analysis.get('should_reply', False)}")
                 
-                # Перевіряємо чи потрібно показати анти-спам повідомлення
-                if spam_level in ['medium', 'high'] and random.random() < 0.3:  # 30% шанс
-                    anti_spam_msg = enhanced_behavior.get_anti_spam_message(spam_level)
-                    if anti_spam_msg:
-                        await safe_reply(message, anti_spam_msg)
-                        smart_behavior.mark_bot_activity(chat_id)
-                        return
-                
-                # Якщо аналіз рекомендує відповісти
-                if analysis_result['should_respond']:
-                    # Використовуємо готову інструкцію тону з урахуванням спаму та контексту
-                    tone_instruction = analysis_result['tone_instruction']
+                # Перевіряємо чи потрібно відповідати
+                if analysis.get('should_reply', False):
+                    # Отримуємо інструкцію для тону
+                    tone_instruction = analysis.get('tone_instruction', '')
                     
-                    # Отримуємо рекомендації щодо відповіді
-                    recommendations = analysis_result['recommendations']
-                    
-                    # Передаємо стиснений контекст та інструкцію тону в Gemini
-                    processed_context = analysis_result['processed_context']
-                    
-                    # Створюємо фейкове повідомлення з обробленим контекстом для Gemini
+                    # Створюємо покращене повідомлення з контекстом
                     enhanced_message = FakeMessage(
                         text=message.text,
                         chat_id=chat_id,
-                        user_name=getattr(message.from_user, 'full_name', 'Користувач'),
-                        processed_context=processed_context,
-                        recommendations=recommendations
+                        user_name=user_name,
+                        processed_context=str(chat_context[-10:]),  # Останні 10 повідомлень
+                        recommendations=analysis
                     )
                     
+                    # Генеруємо відповідь через Gemini
                     reply = await gemini.process_message(enhanced_message, tone_instruction)
                     
-                    # Обрізаємо відповідь якщо потрібно (для спаму)
-                    max_length = recommendations.get('max_response_length', 200)
+                    # Обрізаємо відповідь якщо потрібно
+                    max_length = analysis.get('max_response_length', 200)
                     if len(reply) > max_length:
                         reply = reply[:max_length-3] + "..."
                     
@@ -308,3 +294,19 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+class FakeMessage:
+    """Фейкове повідомлення для сумісності з API"""
+    def __init__(self, text: str, chat_id: int = 0, user_name: str = "System", 
+                 processed_context: Optional[str] = None, recommendations: Optional[Dict[str, Any]] = None):
+        self.text = text
+        self.processed_context = processed_context
+        self.recommendations = recommendations or {}
+        
+        # Створюємо фейкові об'єкти для сумісності
+        self.chat = type('Chat', (), {'id': chat_id})()
+        self.from_user = type('User', (), {
+            'full_name': user_name,
+            'id': 0,
+            'username': user_name.lower().replace(' ', '_')
+        })()
